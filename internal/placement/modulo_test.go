@@ -1,79 +1,19 @@
 package placement
 
 import (
-	"errors"
 	"fmt"
-	"slices"
 	"testing"
 )
 
-func TestModuloDeterminism(t *testing.T) {
-	m, err := NewModulo([]NodeID{"C", "A", "B"})
-	if err != nil {
-		t.Fatal(err)
-	}
+func newModulo(members []NodeID) (Placement, error) { return NewModulo(members) }
 
-	for i := range 100 {
-		key := fmt.Sprintf("key-%d", i)
-		if first, second := m.Owner(key), m.Owner(key); first != second {
-			t.Fatalf("Owner(%q) changed from %q to %q", key, first, second)
-		}
-	}
-}
-
-func TestModuloMembership(t *testing.T) {
-	m, err := NewModulo([]NodeID{"C", "A", "B"})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	members := m.Members()
-	if len(members) != 3 {
-		t.Fatalf("Members() returned %d nodes, want 3", len(members))
-	}
-	for i, want := range []NodeID{"A", "B", "C"} {
-		if members[i] != want {
-			t.Fatalf("Members()[%d] = %q, want %q", i, members[i], want)
-		}
-	}
-	for i := range 100 {
-		key := fmt.Sprintf("key-%d", i)
-		if owner := m.Owner(key); !slices.Contains(members, owner) {
-			t.Fatalf("Owner(%q) = %q, not a member", key, owner)
-		}
-	}
-
-	members[0] = "X"
-	if got := m.Members()[0]; got != "A" {
-		t.Fatalf("changing Members() result changed internal nodes: got %q", got)
-	}
-	if _, err := NewModulo(nil); err == nil {
-		t.Fatal("NewModulo accepted no members")
-	}
-	if _, err := NewModulo([]NodeID{"A", "A"}); err == nil {
-		t.Fatal("NewModulo accepted duplicate members")
-	}
-	if err := m.Add("B"); err == nil {
-		t.Fatal("Add accepted a duplicate member")
-	}
-}
-
-func TestModuloLastNode(t *testing.T) {
-	m, err := NewModulo([]NodeID{"A"})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if err := m.Remove("Z"); !errors.Is(err, ErrUnknownNode) {
-		t.Fatalf("Remove(\"Z\") = %v, want ErrUnknownNode", err)
-	}
-	if err := m.Remove("A"); !errors.Is(err, ErrLastNode) {
-		t.Fatalf("Remove(\"A\") = %v, want ErrLastNode", err)
-	}
-	if members := m.Members(); len(members) != 1 || members[0] != "A" {
-		t.Fatalf("last member changed after rejected removal: %v", members)
-	}
-}
+// Modulo is not consistent, so it skips the two minimal-disruption tests
+// Instead, TestModuloDisruption shows how many keys it moves
+func TestModuloDeterministic(t *testing.T)      { testDeterministic(t, newModulo) }
+func TestModuloOwnerIsMember(t *testing.T)      { testOwnerIsMember(t, newModulo) }
+func TestModuloMemberOrderIgnored(t *testing.T) { testMemberOrderIgnored(t, newModulo) }
+func TestModuloBalanced(t *testing.T)           { testBalanced(t, newModulo, 0.05) }
+func TestModuloMembershipRules(t *testing.T)    { testMembershipRules(t, newModulo) }
 
 func TestModuloDisruption(t *testing.T) {
 	m, err := NewModulo([]NodeID{"A", "B", "C"})
