@@ -57,3 +57,52 @@ func (r *Ring) rebuild() {
 	})
 	r.tokens = tokens
 }
+
+func (r *Ring) Owner(key string) NodeID {
+	return r.ownerAt(hash64(key))
+}
+
+func (r *Ring) ownerAt(position uint64) NodeID {
+	i := sort.Search(len(r.tokens), func(i int) bool {
+		return r.tokens[i].position >= position
+	})
+	if i == len(r.tokens) {
+		i = 0
+	}
+	return r.tokens[i].node
+}
+
+func (r *Ring) Add(n NodeID) error {
+	if slices.Contains(r.nodes, n) {
+		return fmt.Errorf("duplicate node %q", n)
+	}
+
+	r.nodes = append(r.nodes, n)
+	slices.Sort(r.nodes)
+	r.rebuild()
+	return nil
+}
+
+func (r *Ring) Remove(n NodeID) error {
+	for i, node := range r.nodes {
+		if node == n {
+			if len(r.nodes) == 1 {
+				return ErrLastNode
+			}
+			r.nodes = append(r.nodes[:i], r.nodes[i+1:]...)
+			r.rebuild()
+			return nil
+		}
+	}
+	return ErrUnknownNode
+}
+
+func (r *Ring) Members() []NodeID {
+	return append([]NodeID(nil), r.nodes...)
+}
+
+func (r *Ring) Save() ([]byte, error) {
+	return nil, nil
+}
+
+var _ Placement = (*Ring)(nil)
