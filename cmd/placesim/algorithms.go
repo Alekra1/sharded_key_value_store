@@ -29,10 +29,14 @@ func algorithms() []algorithm {
 	return list
 }
 
-func nodeIDs(n int) []placement.NodeID {
+func nodeID(seed uint64, i int) placement.NodeID {
+	return placement.NodeID(fmt.Sprintf("s%d-node-%d", seed, i))
+}
+
+func nodeIDs(seed uint64, n int) []placement.NodeID {
 	nodes := make([]placement.NodeID, n)
 	for i := range n {
-		nodes[i] = placement.NodeID(fmt.Sprintf("node-%d", i))
+		nodes[i] = nodeID(seed, i)
 	}
 	return nodes
 }
