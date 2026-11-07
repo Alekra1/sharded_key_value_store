@@ -30,6 +30,39 @@ func (j *Jump) Owner(key string) NodeID {
 	return j.nodes[jumpBucket(hash64(key), len(j.nodes))]
 }
 
+func (j *Jump) Add(n NodeID) error {
+	if slices.Contains(j.nodes, n) {
+		return fmt.Errorf("duplicate node %q", n)
+	}
+
+	j.nodes = append(j.nodes, n)
+	return nil
+}
+
+func (j *Jump) Remove(n NodeID) error {
+	i := slices.Index(j.nodes, n)
+	if i < 0 {
+		return ErrUnknownNode
+	}
+	if len(j.nodes) == 1 {
+		return ErrLastNode
+	}
+
+	last := len(j.nodes) - 1
+	j.nodes[i] = j.nodes[last]
+	j.nodes = j.nodes[:last]
+	return nil
+}
+
+func (j *Jump) Members() []NodeID {
+	return append([]NodeID(nil), j.nodes...)
+}
+
+// Just a placeholder for now
+func (j *Jump) Save() ([]byte, error) {
+	return nil, nil
+}
+
 // r is a random fraction between 0 and 1 that is never 0
 func jumpBucket(key uint64, buckets int) int {
 	b, j := int64(-1), int64(0)
@@ -41,3 +74,5 @@ func jumpBucket(key uint64, buckets int) int {
 	}
 	return int(b)
 }
+
+var _ Placement = (*Jump)(nil)
