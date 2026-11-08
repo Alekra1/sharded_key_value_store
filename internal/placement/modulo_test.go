@@ -9,11 +9,12 @@ func newModulo(members []NodeID) (Placement, error) { return NewModulo(members) 
 
 // Modulo is not consistent, so it skips the two minimal-disruption tests
 // Instead, TestModuloDisruption shows how many keys it moves
-func TestModuloDeterministic(t *testing.T)      { testDeterministic(t, newModulo) }
-func TestModuloOwnerIsMember(t *testing.T)      { testOwnerIsMember(t, newModulo) }
-func TestModuloMemberOrderIgnored(t *testing.T) { testMemberOrderIgnored(t, newModulo) }
-func TestModuloBalanced(t *testing.T)           { testBalanced(t, newModulo, 0.05) }
-func TestModuloMembershipRules(t *testing.T)    { testMembershipRules(t, newModulo) }
+func TestModuloDeterministic(t *testing.T)       { testDeterministic(t, newModulo) }
+func TestModuloOwnerIsMember(t *testing.T)       { testOwnerIsMember(t, newModulo) }
+func TestModuloMemberOrderIgnored(t *testing.T)  { testMemberOrderIgnored(t, newModulo) }
+func TestModuloBalanced(t *testing.T)            { testBalanced(t, newModulo, 0.05) }
+func TestModuloMembershipRules(t *testing.T)     { testMembershipRules(t, newModulo) }
+func TestModuloMembersAfterChanges(t *testing.T) { testMembersAfterChanges(t, newModulo) }
 
 func TestModuloDisruption(t *testing.T) {
 	m, err := NewModulo([]NodeID{"A", "B", "C"})

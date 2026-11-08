@@ -116,8 +116,7 @@ func testAddMovesKeysOnlyToNewNode(t *testing.T, newP newPlacementFunc) {
 }
 
 // Only removed node's keys move, and no other
-func testRemoveMovesOnlyRemovedNodesKeys(t *testing.T, newP newPlacementFunc) {
-	const removed = NodeID("node-3")
+func testRemoveMovesOnlyRemovedNodesKeys(t *testing.T, newP newPlacementFunc, removed NodeID) {
 	p := mustNew(t, newP, nodeIDs(propertyNodes))
 	before := owners(p, propertyKeys)
 	if err := p.Remove(removed); err != nil {
@@ -160,5 +159,23 @@ func testMembershipRules(t *testing.T, newP newPlacementFunc) {
 	members[0] = "X"
 	if got := p.Members()[0]; got != "A" {
 		t.Fatalf("changing the Members() result changed the placement: got %q", got)
+	}
+}
+
+// Members() lists exactly the current nodes, in any order
+func testMembersAfterChanges(t *testing.T, newP newPlacementFunc) {
+	p := mustNew(t, newP, []NodeID{"A", "B", "C"})
+	if err := p.Add("D"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Remove("B"); err != nil {
+		t.Fatal(err)
+	}
+
+	got := p.Members()
+	slices.Sort(got)
+	want := []NodeID{"A", "C", "D"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("Members() = %v after adding D and removing B, want %v in any order", got, want)
 	}
 }

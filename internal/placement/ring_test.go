@@ -11,18 +11,19 @@ func newRing(members []NodeID) (Placement, error) { return NewRing(members, ring
 
 // The ring's arcs are uneven even with 1,000 virtual nodes per node, so its
 // balance is set to 10% while rendezvous and modulo use 5%
-func TestRingDeterministic(t *testing.T)      { testDeterministic(t, newRing) }
-func TestRingOwnerIsMember(t *testing.T)      { testOwnerIsMember(t, newRing) }
-func TestRingMemberOrderIgnored(t *testing.T) { testMemberOrderIgnored(t, newRing) }
-func TestRingBalanced(t *testing.T)           { testBalanced(t, newRing, 0.10) }
-func TestRingMembershipRules(t *testing.T)    { testMembershipRules(t, newRing) }
+func TestRingDeterministic(t *testing.T)       { testDeterministic(t, newRing) }
+func TestRingOwnerIsMember(t *testing.T)       { testOwnerIsMember(t, newRing) }
+func TestRingMemberOrderIgnored(t *testing.T)  { testMemberOrderIgnored(t, newRing) }
+func TestRingBalanced(t *testing.T)            { testBalanced(t, newRing, 0.10) }
+func TestRingMembershipRules(t *testing.T)     { testMembershipRules(t, newRing) }
+func TestRingMembersAfterChanges(t *testing.T) { testMembersAfterChanges(t, newRing) }
 
 func TestRingAddMovesKeysOnlyToNewNode(t *testing.T) {
 	testAddMovesKeysOnlyToNewNode(t, newRing)
 }
 
 func TestRingRemoveMovesOnlyRemovedNodesKeys(t *testing.T) {
-	testRemoveMovesOnlyRemovedNodesKeys(t, newRing)
+	testRemoveMovesOnlyRemovedNodesKeys(t, newRing, "node-3")
 }
 
 func TestRingRejectsZeroVnodes(t *testing.T) {
