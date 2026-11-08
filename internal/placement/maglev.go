@@ -47,6 +47,43 @@ func (mg *Maglev) Owner(key string) NodeID {
 	return mg.table[slot]
 }
 
+func (mg *Maglev) Add(n NodeID) error {
+	if n == "" {
+		return errEmptyNodeName
+	}
+	if slices.Contains(mg.nodes, n) {
+		return fmt.Errorf("duplicate node %q", n)
+	}
+
+	mg.nodes = append(mg.nodes, n)
+	slices.Sort(mg.nodes)
+	mg.rebuild()
+	return nil
+}
+
+func (mg *Maglev) Remove(n NodeID) error {
+	i := slices.Index(mg.nodes, n)
+	if i < 0 {
+		return ErrUnknownNode
+	}
+	if len(mg.nodes) == 1 {
+		return ErrLastNode
+	}
+
+	mg.nodes = slices.Delete(mg.nodes, i, i+1)
+	mg.rebuild()
+	return nil
+}
+
+func (mg *Maglev) Members() []NodeID {
+	return append([]NodeID(nil), mg.nodes...)
+}
+
+func (mg *Maglev) Save() ([]byte, error) {
+	return nil, nil
+}
+
+var _ Placement = (*Maglev)(nil)
 
 func isPrime(n int) bool {
 	if n < 2 {
