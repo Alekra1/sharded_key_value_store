@@ -69,7 +69,9 @@ func measureRow(a algorithm, members []placement.NodeID, newNode placement.NodeI
 	if err != nil {
 		return nil, err
 	}
-	removedLast, err := measureRemove(p, keys, members[n-1])
+	current := p.Members()
+	last := current[len(current)-1]
+	removedLast, err := measureRemove(p, keys, last)
 	if err != nil {
 		return nil, err
 	}

@@ -20,10 +20,18 @@ func algorithms() []algorithm {
 		{name: "rendezvous", build: func(m []placement.NodeID) (placement.Placement, error) {
 			return placement.NewRendezvous(m)
 		}},
+		{name: "jump", build: func(m []placement.NodeID) (placement.Placement, error) {
+			return placement.NewJump(m)
+		}},
 	}
 	for _, v := range []int{1, 10, 100, 1000} {
 		list = append(list, algorithm{name: "ring", param: v, build: func(m []placement.NodeID) (placement.Placement, error) {
 			return placement.NewRing(m, v)
+		}})
+	}
+	for _, size := range []int{65537, 655373} {
+		list = append(list, algorithm{name: "maglev", param: size, build: func(m []placement.NodeID) (placement.Placement, error) {
+			return placement.NewMaglev(m, size)
 		}})
 	}
 	return list
