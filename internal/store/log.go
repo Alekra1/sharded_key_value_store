@@ -82,8 +82,8 @@ func readEntry(r io.Reader) (entry, error) {
 		return entry{}, err
 	}
 
+	// Taken before the stored checksum is read, so it covers only the bytes above.
 	want := sum.Sum32()
-	// Read from r so the stored checksum isn't added to sum.
 	stored, err := readUint32(r)
 	if err != nil {
 		return entry{}, err
