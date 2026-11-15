@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -43,6 +44,76 @@ func Create(dir string) (*Store, error) {
 		return nil, err
 	}
 	return &Store{data: make(map[string]string), log: f}, nil
+}
+
+// Open replays the log in dir and returns the store and the number of bytes
+// cut from the end of the file. Cut bytes are saved to a log.cut-* file in dir.
+func Open(dir string) (*Store, int, error) {
+	path := filepath.Join(dir, logName)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, 0, err
+	}
+	r := bytes.NewReader(raw)
+	if err := checkHeader(r); err != nil {
+		return nil, 0, err
+	}
+
+	data := make(map[string]string)
+	goodEnd := len(raw) - r.Len()
+	for {
+		e, err := readEntry(r)
+		// The first entry that can't be read ends the log, whether that is the
+		// clean end of the file or an entry cut off by a crash.
+		if err != nil {
+			break
+		}
+		if e.op == opPut {
+			data[e.key] = e.value
+		} else {
+			delete(data, e.key)
+		}
+		goodEnd = len(raw) - r.Len()
+	}
+	cut := len(raw) - goodEnd
+	if cut > 0 {
+		if err := saveCut(dir, raw[goodEnd:]); err != nil {
+			return nil, 0, err
+		}
+	}
+
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		return nil, 0, err
+	}
+	if cut > 0 {
+		err = f.Truncate(int64(goodEnd))
+		if err == nil {
+			err = f.Sync()
+		}
+		if err != nil {
+			f.Close()
+			return nil, 0, err
+		}
+	}
+	return &Store{data: data, log: f}, cut, nil
+}
+
+// Disk damage can sit in front of good entries, so the cut bytes are kept in a
+// side file where a person can still recover them.
+func saveCut(dir string, cutBytes []byte) error {
+	f, err := os.CreateTemp(dir, logName+".cut-*")
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(cutBytes)
+	if err == nil {
+		err = f.Sync()
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	return err
 }
 
 func (s *Store) Put(key, value string) error {
