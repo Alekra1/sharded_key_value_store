@@ -1,6 +1,7 @@
 package placement
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -57,9 +58,8 @@ func (m *Modulo) Members() []NodeID {
 	return append([]NodeID(nil), m.nodes...)
 }
 
-// Just a placeholder for now
 func (m *Modulo) Save() ([]byte, error) {
-	return nil, nil
+	return json.Marshal(saved{Algorithm: "modulo", Nodes: m.nodes})
 }
 
 var _ Placement = (*Modulo)(nil)

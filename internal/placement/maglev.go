@@ -1,6 +1,7 @@
 package placement
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -80,7 +81,7 @@ func (mg *Maglev) Members() []NodeID {
 }
 
 func (mg *Maglev) Save() ([]byte, error) {
-	return nil, nil
+	return json.Marshal(saved{Algorithm: "maglev", Size: mg.size, Nodes: mg.nodes})
 }
 
 var _ Placement = (*Maglev)(nil)

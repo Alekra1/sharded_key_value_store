@@ -1,6 +1,7 @@
 package placement
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -102,7 +103,7 @@ func (r *Ring) Members() []NodeID {
 }
 
 func (r *Ring) Save() ([]byte, error) {
-	return nil, nil
+	return json.Marshal(saved{Algorithm: "ring", VNodes: r.vnodes, Nodes: r.nodes})
 }
 
 var _ Placement = (*Ring)(nil)

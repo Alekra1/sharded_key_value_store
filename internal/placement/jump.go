@@ -1,6 +1,7 @@
 package placement
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -58,9 +59,19 @@ func (j *Jump) Members() []NodeID {
 	return append([]NodeID(nil), j.nodes...)
 }
 
-// Just a placeholder for now
 func (j *Jump) Save() ([]byte, error) {
-	return nil, nil
+	return json.Marshal(saved{Algorithm: "jump", Nodes: j.nodes})
+}
+
+// NewJump sorts the nodes, which would renumber the buckets after a removal,
+// so the saved order is put back once NewJump has checked the list.
+func loadJump(nodes []NodeID) (*Jump, error) {
+	j, err := NewJump(nodes)
+	if err != nil {
+		return nil, err
+	}
+	copy(j.nodes, nodes)
+	return j, nil
 }
 
 // r is a random fraction between 0 and 1 that is never 0

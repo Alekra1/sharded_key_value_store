@@ -1,6 +1,7 @@
 package placement
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -65,9 +66,8 @@ func (r *Rendezvous) Members() []NodeID {
 	return append([]NodeID(nil), r.nodes...)
 }
 
-// Just a placeholder for now
 func (r *Rendezvous) Save() ([]byte, error) {
-	return nil, nil
+	return json.Marshal(saved{Algorithm: "rendezvous", Nodes: r.nodes})
 }
 
 var _ Placement = (*Rendezvous)(nil)
