@@ -3,8 +3,11 @@ package router
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/Alekra1/sharded_key_value_store/internal/placement"
 )
@@ -14,6 +17,20 @@ import (
 type state struct {
 	Placement json.RawMessage             `json:"placement"`
 	URLs      map[placement.NodeID]string `json:"urls"`
+}
+
+// InitState creates the state file of a new cluster. It refuses to replace an
+// existing file, which would lose the placement of a cluster that has data.
+func InitState(path, algorithm string, urls map[placement.NodeID]string, vnodes, size int) error {
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("%s: %w", path, fs.ErrExist)
+	}
+	// The constructors sort the nodes, so the map's random order doesn't matter.
+	p, err := placement.New(algorithm, slices.Collect(maps.Keys(urls)), vnodes, size)
+	if err != nil {
+		return err
+	}
+	return saveState(path, p, urls)
 }
 
 func saveState(path string, p placement.Placement, urls map[placement.NodeID]string) error {

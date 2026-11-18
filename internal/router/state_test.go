@@ -84,6 +84,48 @@ func TestSaveStateReplacesFile(t *testing.T) {
 	}
 }
 
+func TestInitState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := InitState(path, "ring", testURLs, 10, 0); err != nil {
+		t.Fatal(err)
+	}
+	p, urls, err := LoadState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []placement.NodeID{"A", "B", "C"}; !slices.Equal(p.Members(), want) {
+		t.Errorf("members %v, want %v", p.Members(), want)
+	}
+	if !maps.Equal(urls, testURLs) {
+		t.Errorf("urls %v, want %v", urls, testURLs)
+	}
+
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := InitState(path, "modulo", testURLs, 0, 0); !errors.Is(err, fs.ErrExist) {
+		t.Errorf("second InitState: got %v, want fs.ErrExist", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Error("second InitState changed the file")
+	}
+}
+
+func TestInitStateBadAlgorithmWritesNothing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := InitState(path, "chord", testURLs, 0, 0); err == nil {
+		t.Fatal("InitState accepted an unknown algorithm")
+	}
+	if _, err := os.Stat(path); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("state file exists after a failed init: %v", err)
+	}
+}
+
 func TestLoadStateErrors(t *testing.T) {
 	dir := t.TempDir()
 	if _, _, err := LoadState(filepath.Join(dir, "missing.json")); !errors.Is(err, fs.ErrNotExist) {
