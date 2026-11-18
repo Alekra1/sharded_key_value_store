@@ -2,6 +2,7 @@ package placement
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -73,6 +74,26 @@ func TestSaveFormat(t *testing.T) {
 		if string(data) != c.want {
 			t.Errorf("Save() = %s, want %s", data, c.want)
 		}
+	}
+}
+
+func TestNewByName(t *testing.T) {
+	nodes := []NodeID{"C", "A", "B"}
+	for _, name := range []string{"modulo", "rendezvous", "ring", "jump", "maglev"} {
+		p, err := New(name, nodes, 100, 65537)
+		if err != nil {
+			t.Fatalf("New(%s): %v", name, err)
+		}
+		data, err := p.Save()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(data), `"algorithm":"`+name+`"`) {
+			t.Errorf("New(%s) built %s", name, data)
+		}
+	}
+	if p, err := New("chord", nodes, 100, 65537); err == nil || p != nil {
+		t.Errorf("New(chord) = %v, %v; want nil and an error", p, err)
 	}
 }
 

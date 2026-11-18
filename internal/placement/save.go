@@ -21,25 +21,12 @@ func Load(data []byte) (Placement, error) {
 		return nil, fmt.Errorf("saved placement: %w", err)
 	}
 
-	var p Placement
-	var err error
-	switch s.Algorithm {
-	case "modulo":
-		p, err = NewModulo(s.Nodes)
-	case "rendezvous":
-		p, err = NewRendezvous(s.Nodes)
-	case "ring":
-		p, err = NewRing(s.Nodes, s.VNodes)
-	case "jump":
-		p, err = loadJump(s.Nodes)
-	case "maglev":
-		p, err = NewMaglev(s.Nodes, s.Size)
-	default:
-		return nil, fmt.Errorf("saved placement: unknown algorithm %q", s.Algorithm)
+	if s.Algorithm == "jump" {
+		j, err := loadJump(s.Nodes)
+		if err != nil {
+			return nil, err
+		}
+		return j, nil
 	}
-	// On error p holds a nil pointer, which is still a non-nil Placement.
-	if err != nil {
-		return nil, err
-	}
-	return p, nil
+	return New(s.Algorithm, s.Nodes, s.VNodes, s.Size)
 }
