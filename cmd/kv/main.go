@@ -21,6 +21,7 @@ const usage = `usage:
   kv [-router URL] put KEY VALUE
   kv [-router URL] get KEY
   kv [-router URL] delete KEY
+  kv [-router URL] status
 `
 
 var errUsage = errors.New("bad command")
@@ -65,6 +66,8 @@ func run(routerURL string, args []string, out io.Writer) error {
 		return nil
 	case cmd == "delete" && len(rest) == 1:
 		return c.delete(rest[0])
+	case cmd == "status" && len(rest) == 0:
+		return c.status(out)
 	}
 	return errUsage
 }
@@ -79,12 +82,12 @@ func (c client) put(key, value string) error {
 	if err != nil {
 		return err
 	}
-	_, err = c.do(http.MethodPut, key, bytes.NewReader(body))
+	_, err = c.do(http.MethodPut, kvPath(key), bytes.NewReader(body))
 	return err
 }
 
 func (c client) get(key string) (string, error) {
-	data, err := c.do(http.MethodGet, key, nil)
+	data, err := c.do(http.MethodGet, kvPath(key), nil)
 	if errors.Is(err, errNotFound) {
 		return "", fmt.Errorf("key %q not found", key)
 	}
@@ -99,14 +102,47 @@ func (c client) get(key string) (string, error) {
 }
 
 func (c client) delete(key string) error {
-	_, err := c.do(http.MethodDelete, key, nil)
+	_, err := c.do(http.MethodDelete, kvPath(key), nil)
 	return err
+}
+
+func (c client) status(out io.Writer) error {
+	data, err := c.do(http.MethodGet, "/status", nil)
+	if err != nil {
+		return err
+	}
+	var st protocol.ClusterStatus
+	if err := json.Unmarshal(data, &st); err != nil {
+		return fmt.Errorf("bad reply from router: %q", data)
+	}
+
+	fmt.Fprintf(out, "placement: %s\n", st.Placement)
+	keys, reached := 0, 0
+	for _, n := range st.Nodes {
+		switch {
+		case n.Unavailable != "":
+			fmt.Fprintf(out, "%s  %s  unavailable: %s\n", n.Name, n.URL, n.Unavailable)
+			continue
+		case n.Broken != "":
+			fmt.Fprintf(out, "%s  %s  %d keys, broken: %s\n", n.Name, n.URL, n.Keys, n.Broken)
+		default:
+			fmt.Fprintf(out, "%s  %s  %d keys\n", n.Name, n.URL, n.Keys)
+		}
+		keys += n.Keys
+		reached++
+	}
+	fmt.Fprintf(out, "total: %d keys on %d of %d nodes\n", keys, reached, len(st.Nodes))
+	return nil
+}
+
+func kvPath(key string) string {
+	return "/kv?key=" + url.QueryEscape(key)
 }
 
 var errNotFound = errors.New("not found")
 
-func (c client) do(method, key string, body io.Reader) ([]byte, error) {
-	req, err := http.NewRequest(method, c.base+"/kv?key="+url.QueryEscape(key), body)
+func (c client) do(method, path string, body io.Reader) ([]byte, error) {
+	req, err := http.NewRequest(method, c.base+path, body)
 	if err != nil {
 		return nil, err
 	}

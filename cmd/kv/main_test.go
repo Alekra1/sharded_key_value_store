@@ -140,11 +140,15 @@ func TestRequests(t *testing.T) {
 	wantOutput(t, router, "", "put", "user 1+2", "a b")
 	wantOutput(t, router, "v\n", "get", "user 1+2")
 	wantOutput(t, router, "", "delete", "user 1+2")
+	if _, err := kv(router, "status"); err != nil {
+		t.Fatal(err)
+	}
 
 	want := []string{
 		`PUT /kv key=user 1+2 type=application/json body={"value":"a b"}`,
 		"GET /kv key=user 1+2 type= body=",
 		"DELETE /kv key=user 1+2 type= body=",
+		"GET /status key= type= body=",
 	}
 	mu.Lock()
 	defer mu.Unlock()
@@ -168,6 +172,7 @@ func TestRouterErrors(t *testing.T) {
 		{"error without JSON", 500, "oops", []string{"delete", "x"}, "router replied 500 Internal Server Error"},
 		{"value not JSON", 200, "meow", []string{"get", "x"}, `bad reply from router: "meow"`},
 		{"value missing", 200, "{}", []string{"get", "x"}, `bad reply from router: "{}"`},
+		{"status not JSON", 200, "meow", []string{"status"}, `bad reply from router: "meow"`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -202,9 +207,25 @@ func TestBadCommands(t *testing.T) {
 		{"get", "a", "b"},
 		{"delete"},
 		{"delete", "a", "b"},
+		{"status", "x"},
 	} {
 		if _, err := kv(srv.URL, args...); !errors.Is(err, errUsage) {
 			t.Errorf("kv %q: error %v, want errUsage", args, err)
 		}
 	}
+}
+
+func TestStatus(t *testing.T) {
+	router := replyWith(t, http.StatusOK, `{"placement":{"algorithm":"ring","vnodes":100,"nodes":["A","B","C"]},"nodes":[
+		{"name":"A","url":"http://a","keys":3},
+		{"name":"B","url":"http://b","keys":5,"broken":"disk full"},
+		{"name":"C","url":"http://c","keys":0,"unavailable":"connection refused"}]}`)
+
+	want := `placement: {"algorithm":"ring","vnodes":100,"nodes":["A","B","C"]}
+A  http://a  3 keys
+B  http://b  5 keys, broken: disk full
+C  http://c  unavailable: connection refused
+total: 8 keys on 2 of 3 nodes
+`
+	wantOutput(t, router, want, "status")
 }
