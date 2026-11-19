@@ -194,3 +194,54 @@ func TestWrongMethod(t *testing.T) {
 		t.Errorf("POST: status %d, want 405", rec.Code)
 	}
 }
+
+func statusNode(t *testing.T, status int, body string) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" || r.URL.Path != "/status" {
+			t.Errorf("node got %s %s, want GET /status", r.Method, r.URL)
+		}
+		w.WriteHeader(status)
+		io.WriteString(w, body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+func TestStatus(t *testing.T) {
+	a := statusNode(t, http.StatusOK, `{"keys":3}`)
+	b := statusNode(t, http.StatusOK, `{"keys":5,"broken":"disk full"}`)
+	c := statusNode(t, http.StatusInternalServerError, "")
+	down := echoNode(t, "D")
+	rt := newRouter(t, map[placement.NodeID]string{"A": a, "B": b, "C": c, "D": down.URL})
+	down.Close()
+
+	rec := do(rt, "GET", "/status", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	var got protocol.ClusterStatus
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("reply %q: %v", rec.Body.String(), err)
+	}
+
+	saved, _ := rt.placement.Save()
+	if string(got.Placement) != string(saved) {
+		t.Errorf("placement %s, want %s", got.Placement, saved)
+	}
+	if len(got.Nodes) != 4 {
+		t.Fatalf("got %d nodes, want 4: %+v", len(got.Nodes), got.Nodes)
+	}
+	if want := (protocol.NodeReport{Name: "A", URL: a, Keys: 3}); got.Nodes[0] != want {
+		t.Errorf("A: %+v, want %+v", got.Nodes[0], want)
+	}
+	if want := (protocol.NodeReport{Name: "B", URL: b, Keys: 5, Broken: "disk full"}); got.Nodes[1] != want {
+		t.Errorf("B: %+v, want %+v", got.Nodes[1], want)
+	}
+	if want := (protocol.NodeReport{Name: "C", URL: c, Unavailable: "node replied 500 Internal Server Error"}); got.Nodes[2] != want {
+		t.Errorf("C: %+v, want %+v", got.Nodes[2], want)
+	}
+	if d := got.Nodes[3]; d.Name != "D" || d.Keys != 0 || d.Unavailable == "" {
+		t.Errorf("D: %+v, want unavailable", d)
+	}
+}

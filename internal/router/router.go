@@ -1,6 +1,7 @@
 package router
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,6 +42,7 @@ func (rt *Router) Handler() http.Handler {
 	mux.HandleFunc("GET /kv", rt.forward)
 	mux.HandleFunc("PUT /kv", rt.forward)
 	mux.HandleFunc("DELETE /kv", rt.forward)
+	mux.HandleFunc("GET /status", rt.status)
 	return mux
 }
 
@@ -81,8 +83,59 @@ func (rt *Router) forward(w http.ResponseWriter, r *http.Request) {
 	io.Copy(w, resp.Body)
 }
 
-func writeError(w http.ResponseWriter, status int, msg string) {
+// status asks the nodes one at a time, so a slow node delays the reply by up
+// to the client timeout.
+func (rt *Router) status(w http.ResponseWriter, r *http.Request) {
+	saved, err := rt.placement.Save()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	report := protocol.ClusterStatus{Placement: saved}
+	for _, id := range rt.placement.Members() {
+		report.Nodes = append(report.Nodes, rt.nodeReport(r.Context(), id))
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
+func (rt *Router) nodeReport(ctx context.Context, id placement.NodeID) protocol.NodeReport {
+	report := protocol.NodeReport{Name: string(id), URL: rt.nodes[id]}
+	st, err := rt.askStatus(ctx, report.URL)
+	if err != nil {
+		report.Unavailable = err.Error()
+		return report
+	}
+	report.Keys = st.Keys
+	report.Broken = st.Broken
+	return report
+}
+
+func (rt *Router) askStatus(ctx context.Context, nodeURL string) (protocol.NodeStatus, error) {
+	var st protocol.NodeStatus
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, nodeURL+"/status", nil)
+	if err != nil {
+		return st, err
+	}
+	resp, err := rt.client.Do(req)
+	if err != nil {
+		return st, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return st, fmt.Errorf("node replied %s", resp.Status)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
+		return st, fmt.Errorf("bad status reply: %w", err)
+	}
+	return st, nil
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(protocol.Error{Error: msg})
+	json.NewEncoder(w).Encode(v)
+}
+
+func writeError(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, protocol.Error{Error: msg})
 }
