@@ -163,6 +163,13 @@ func (s *Store) Delete(key string) error {
 	return nil
 }
 
+// Status reports the number of keys and the error that broke the store, or nil.
+func (s *Store) Status() (keys int, broken error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.data), s.broken
+}
+
 func (s *Store) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

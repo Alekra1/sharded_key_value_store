@@ -311,3 +311,22 @@ func TestConcurrentWrites(t *testing.T) {
 		t.Fatalf("after reopen: %d keys, cut %d; want %d keys, cut 0", len(s.data), cut, writers*perWriter)
 	}
 }
+
+func TestStatus(t *testing.T) {
+	s, _ := newStore(t)
+	mustPut(t, s, "cat", "meow")
+	mustPut(t, s, "dog", "woof")
+	mustPut(t, s, "cat", "purr")
+	if err := s.Delete("dog"); err != nil {
+		t.Fatal(err)
+	}
+	if keys, broken := s.Status(); keys != 1 || broken != nil {
+		t.Fatalf("Status() = %d, %v; want 1, nil", keys, broken)
+	}
+
+	s.log.Close()
+	first := s.Put("fox", "ring")
+	if keys, broken := s.Status(); keys != 1 || !errors.Is(broken, first) {
+		t.Errorf("after a failed write Status() = %d, %v; want 1, %v", keys, broken, first)
+	}
+}

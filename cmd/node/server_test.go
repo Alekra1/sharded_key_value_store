@@ -127,3 +127,36 @@ func TestWrongMethod(t *testing.T) {
 	s, _ := newServer(t)
 	wantStatus(t, do(s, "POST", "/kv?key=cat", `{"value":"meow"}`), http.StatusMethodNotAllowed)
 }
+
+func readStatus(t *testing.T, rec *httptest.ResponseRecorder) protocol.NodeStatus {
+	t.Helper()
+	wantStatus(t, rec, http.StatusOK)
+	if ct := rec.Result().Header.Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type %q, want application/json", ct)
+	}
+	var st protocol.NodeStatus
+	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
+		t.Fatalf("reply %q: %v", rec.Body.String(), err)
+	}
+	return st
+}
+
+func TestStatus(t *testing.T) {
+	s, st := newServer(t)
+	if got := readStatus(t, do(s, "GET", "/status", "")); got != (protocol.NodeStatus{}) {
+		t.Errorf("empty node: %+v, want no keys and not broken", got)
+	}
+
+	wantStatus(t, do(s, "PUT", "/kv?key=cat", `{"value":"meow"}`), http.StatusNoContent)
+	wantStatus(t, do(s, "PUT", "/kv?key=dog", `{"value":"woof"}`), http.StatusNoContent)
+	if got := readStatus(t, do(s, "GET", "/status", "")); got != (protocol.NodeStatus{Keys: 2}) {
+		t.Errorf("after two puts: %+v, want 2 keys and not broken", got)
+	}
+
+	st.Close()
+	wantError(t, do(s, "PUT", "/kv?key=fox", `{"value":"ring"}`), http.StatusInternalServerError)
+	got := readStatus(t, do(s, "GET", "/status", ""))
+	if got.Keys != 2 || !strings.HasPrefix(got.Broken, "store stopped") {
+		t.Errorf("after a failed write: %+v, want 2 keys and the store's error", got)
+	}
+}

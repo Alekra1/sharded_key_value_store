@@ -24,6 +24,7 @@ func (s *server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /kv", s.get)
 	mux.HandleFunc("PUT /kv", s.put)
 	mux.HandleFunc("DELETE /kv", s.delete)
+	mux.HandleFunc("GET /status", s.status)
 	return mux
 }
 
@@ -66,6 +67,15 @@ func (s *server) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) status(w http.ResponseWriter, r *http.Request) {
+	keys, broken := s.store.Status()
+	st := protocol.NodeStatus{Keys: keys}
+	if broken != nil {
+		st.Broken = broken.Error()
+	}
+	writeJSON(w, http.StatusOK, st)
 }
 
 func storeErrorStatus(err error) int {
