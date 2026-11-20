@@ -16,6 +16,7 @@ type Error struct {
 // NodeStatus is a node's reply to GET /status.
 type NodeStatus struct {
 	Keys   int    `json:"keys"`
+	Frozen bool   `json:"frozen,omitempty"`
 	Broken string `json:"broken,omitempty"`
 }
 
@@ -30,6 +31,7 @@ type NodeReport struct {
 	Name   string `json:"name"`
 	URL    string `json:"url"`
 	Keys   int    `json:"keys"`
+	Frozen bool   `json:"frozen,omitempty"`
 	Broken string `json:"broken,omitempty"`
 	// Set when the router could not get the node's status.
 	Unavailable string `json:"unavailable,omitempty"`

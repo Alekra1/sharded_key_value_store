@@ -160,3 +160,24 @@ func TestStatus(t *testing.T) {
 		t.Errorf("after a failed write: %+v, want 2 keys and the store's error", got)
 	}
 }
+
+func TestFreeze(t *testing.T) {
+	s, _ := newServer(t)
+	wantStatus(t, do(s, "PUT", "/kv?key=cat", `{"value":"meow"}`), http.StatusNoContent)
+
+	wantStatus(t, do(s, "POST", "/freeze", ""), http.StatusNoContent)
+	wantError(t, do(s, "PUT", "/kv?key=dog", `{"value":"woof"}`), http.StatusServiceUnavailable)
+	wantError(t, do(s, "DELETE", "/kv?key=cat", ""), http.StatusServiceUnavailable)
+	wantValue(t, do(s, "GET", "/kv?key=cat", ""), "meow")
+	if got := readStatus(t, do(s, "GET", "/status", "")); got != (protocol.NodeStatus{Keys: 1, Frozen: true}) {
+		t.Errorf("frozen node: %+v, want 1 key and frozen", got)
+	}
+
+	wantStatus(t, do(s, "POST", "/unfreeze", ""), http.StatusNoContent)
+	wantStatus(t, do(s, "PUT", "/kv?key=dog", `{"value":"woof"}`), http.StatusNoContent)
+	if got := readStatus(t, do(s, "GET", "/status", "")); got != (protocol.NodeStatus{Keys: 2}) {
+		t.Errorf("after unfreeze: %+v, want 2 keys and not frozen", got)
+	}
+
+	wantStatus(t, do(s, "GET", "/freeze", ""), http.StatusMethodNotAllowed)
+}

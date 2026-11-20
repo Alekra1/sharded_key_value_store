@@ -320,13 +320,113 @@ func TestStatus(t *testing.T) {
 	if err := s.Delete("dog"); err != nil {
 		t.Fatal(err)
 	}
-	if keys, broken := s.Status(); keys != 1 || broken != nil {
+	if keys, _, broken := s.Status(); keys != 1 || broken != nil {
 		t.Fatalf("Status() = %d, %v; want 1, nil", keys, broken)
 	}
 
 	s.log.Close()
 	first := s.Put("fox", "ring")
-	if keys, broken := s.Status(); keys != 1 || !errors.Is(broken, first) {
+	if keys, _, broken := s.Status(); keys != 1 || !errors.Is(broken, first) {
 		t.Errorf("after a failed write Status() = %d, %v; want 1, %v", keys, broken, first)
+	}
+}
+
+func TestFreeze(t *testing.T) {
+	s, dir := newStore(t)
+	mustPut(t, s, "cat", "meow")
+	if err := s.Freeze(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Freeze(); err != nil {
+		t.Fatalf("second Freeze: %v", err)
+	}
+
+	if err := s.Put("dog", "woof"); !errors.Is(err, ErrFrozen) {
+		t.Errorf("Put: got %v, want ErrFrozen", err)
+	}
+	if err := s.Delete("cat"); !errors.Is(err, ErrFrozen) {
+		t.Errorf("Delete: got %v, want ErrFrozen", err)
+	}
+	if err := s.Delete("missing"); !errors.Is(err, ErrFrozen) {
+		t.Errorf("Delete of a missing key: got %v, want ErrFrozen", err)
+	}
+	if v, ok := s.Get("cat"); !ok || v != "meow" {
+		t.Errorf("Get(cat) = %q, %v; want meow, true", v, ok)
+	}
+	if keys, frozen, broken := s.Status(); keys != 1 || !frozen || broken != nil {
+		t.Errorf("Status() = %d, %v, %v; want 1, true, nil", keys, frozen, broken)
+	}
+
+	s.Close()
+	s, _ = reopen(t, dir)
+	if _, frozen, _ := s.Status(); !frozen {
+		t.Fatal("store is not frozen after a restart")
+	}
+	if err := s.Put("dog", "woof"); !errors.Is(err, ErrFrozen) {
+		t.Errorf("Put after restart: got %v, want ErrFrozen", err)
+	}
+
+	if err := s.Unfreeze(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Unfreeze(); err != nil {
+		t.Fatalf("second Unfreeze: %v", err)
+	}
+	mustPut(t, s, "dog", "woof")
+
+	s.Close()
+	s, _ = reopen(t, dir)
+	if keys, frozen, _ := s.Status(); keys != 2 || frozen {
+		t.Errorf("after Unfreeze and restart Status() = %d, %v; want 2, false", keys, frozen)
+	}
+}
+
+func TestFreezeStopsWritesInProgress(t *testing.T) {
+	s, _ := newStore(t)
+	const writers = 8
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	acked := 0
+	started := make(chan struct{}, writers)
+	for w := range writers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// The limit ends the loop if Freeze does not stop the writes.
+			for i := range 10000 {
+				err := s.Put(fmt.Sprintf("w%d-%d", w, i), "v")
+				if errors.Is(err, ErrFrozen) {
+					return
+				}
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				mu.Lock()
+				acked++
+				mu.Unlock()
+				if i == 0 {
+					started <- struct{}{}
+				}
+			}
+			t.Error("Put still succeeds after Freeze")
+		}()
+	}
+	for range writers {
+		<-started
+	}
+
+	if err := s.Freeze(); err != nil {
+		t.Fatal(err)
+	}
+	atFreeze, _, _ := s.Status()
+	wg.Wait()
+
+	final, _, _ := s.Status()
+	if final != atFreeze {
+		t.Errorf("%d keys when Freeze returned, %d after the writers stopped", atFreeze, final)
+	}
+	if final != acked {
+		t.Errorf("%d keys in the store, %d puts acknowledged", final, acked)
 	}
 }

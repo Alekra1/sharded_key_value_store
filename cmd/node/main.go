@@ -58,6 +58,9 @@ func openStore(dir string, create bool) (*store.Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	if _, frozen, _ := st.Status(); frozen {
+		log.Printf("frozen for maintenance; writes are refused until the router unfreezes this node")
+	}
 	if cut > 0 {
 		log.Printf("cut %d bytes from the end of the log; they are saved in a log.cut-* file in %s", cut, dir)
 	}

@@ -25,6 +25,8 @@ func (s *server) routes() *http.ServeMux {
 	mux.HandleFunc("PUT /kv", s.put)
 	mux.HandleFunc("DELETE /kv", s.delete)
 	mux.HandleFunc("GET /status", s.status)
+	mux.HandleFunc("POST /freeze", s.freeze)
+	mux.HandleFunc("POST /unfreeze", s.unfreeze)
 	return mux
 }
 
@@ -70,15 +72,34 @@ func (s *server) delete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) status(w http.ResponseWriter, r *http.Request) {
-	keys, broken := s.store.Status()
-	st := protocol.NodeStatus{Keys: keys}
+	keys, frozen, broken := s.store.Status()
+	st := protocol.NodeStatus{Keys: keys, Frozen: frozen}
 	if broken != nil {
 		st.Broken = broken.Error()
 	}
 	writeJSON(w, http.StatusOK, st)
 }
 
+func (s *server) freeze(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.Freeze(); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) unfreeze(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.Unfreeze(); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func storeErrorStatus(err error) int {
+	if errors.Is(err, store.ErrFrozen) {
+		return http.StatusServiceUnavailable
+	}
 	if errors.Is(err, store.ErrEmptyKey) || errors.Is(err, store.ErrKeyTooLong) || errors.Is(err, store.ErrValueTooLong) {
 		return http.StatusBadRequest
 	}

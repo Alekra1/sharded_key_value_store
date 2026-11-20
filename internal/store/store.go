@@ -4,23 +4,30 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
 )
 
-const logName = "log"
+const (
+	logName    = "log"
+	frozenName = "frozen"
+)
 
 var (
 	ErrEmptyKey     = errors.New("key is empty")
 	ErrKeyTooLong   = fmt.Errorf("key is longer than %d bytes", maxKeyLen)
 	ErrValueTooLong = fmt.Errorf("value is longer than %d bytes", maxValueLen)
+	ErrFrozen       = errors.New("node is frozen for maintenance")
 )
 
 type Store struct {
 	mu     sync.RWMutex
+	dir    string
 	data   map[string]string
 	log    *os.File
+	frozen bool
 	broken error
 }
 
@@ -43,7 +50,7 @@ func Create(dir string) (*Store, error) {
 		os.Remove(path)
 		return nil, err
 	}
-	return &Store{data: make(map[string]string), log: f}, nil
+	return &Store{dir: dir, data: make(map[string]string), log: f}, nil
 }
 
 // Open replays the log in dir and returns the store and the number of bytes
@@ -82,6 +89,11 @@ func Open(dir string) (*Store, int, error) {
 		}
 	}
 
+	frozen, err := fileExists(filepath.Join(dir, frozenName))
+	if err != nil {
+		return nil, 0, err
+	}
+
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
 	if err != nil {
 		return nil, 0, err
@@ -96,7 +108,7 @@ func Open(dir string) (*Store, int, error) {
 			return nil, 0, err
 		}
 	}
-	return &Store{data: data, log: f}, cut, nil
+	return &Store{dir: dir, data: data, log: f, frozen: frozen}, cut, nil
 }
 
 // Disk damage can sit in front of good entries, so the cut bytes are kept in a
@@ -129,6 +141,9 @@ func (s *Store) Put(key, value string) error {
 	if s.broken != nil {
 		return s.broken
 	}
+	if s.frozen {
+		return ErrFrozen
+	}
 	if err := s.writeEntry(entry{op: opPut, key: key, value: value}); err != nil {
 		return err
 	}
@@ -153,6 +168,9 @@ func (s *Store) Delete(key string) error {
 	if s.broken != nil {
 		return s.broken
 	}
+	if s.frozen {
+		return ErrFrozen
+	}
 	if _, ok := s.data[key]; !ok {
 		return nil
 	}
@@ -163,11 +181,47 @@ func (s *Store) Delete(key string) error {
 	return nil
 }
 
-// Status reports the number of keys and the error that broke the store, or nil.
-func (s *Store) Status() (keys int, broken error) {
+// Status reports the number of keys, whether the store is frozen, and the
+// error that broke the store, or nil.
+func (s *Store) Status() (keys int, frozen bool, broken error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return len(s.data), s.broken
+	return len(s.data), s.frozen, s.broken
+}
+
+// Freeze makes Put and Delete fail with ErrFrozen until Unfreeze. It takes the
+// write lock, so a write in progress finishes first and none lands after
+// Freeze returns. The frozen file keeps the store frozen after a restart.
+func (s *Store) Freeze() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.frozen {
+		return nil
+	}
+	if err := os.WriteFile(filepath.Join(s.dir, frozenName), nil, 0o644); err != nil {
+		return err
+	}
+	s.frozen = true
+	return nil
+}
+
+func (s *Store) Unfreeze() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	err := os.Remove(filepath.Join(s.dir, frozenName))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	s.frozen = false
+	return nil
+}
+
+func fileExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func (s *Store) Close() error {
