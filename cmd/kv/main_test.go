@@ -219,13 +219,15 @@ func TestStatus(t *testing.T) {
 	router := replyWith(t, http.StatusOK, `{"placement":{"algorithm":"ring","vnodes":100,"nodes":["A","B","C"]},"nodes":[
 		{"name":"A","url":"http://a","keys":3},
 		{"name":"B","url":"http://b","keys":5,"broken":"disk full"},
+		{"name":"D","url":"http://d","keys":2,"frozen":true},
 		{"name":"C","url":"http://c","keys":0,"unavailable":"connection refused"}]}`)
 
 	want := `placement: {"algorithm":"ring","vnodes":100,"nodes":["A","B","C"]}
 A  http://a  3 keys
 B  http://b  5 keys, broken: disk full
+D  http://d  2 keys, frozen
 C  http://c  unavailable: connection refused
-total: 8 keys on 2 of 3 nodes
+total: 10 keys on 3 of 4 nodes
 `
 	wantOutput(t, router, want, "status")
 }

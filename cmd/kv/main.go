@@ -119,15 +119,18 @@ func (c client) status(out io.Writer) error {
 	fmt.Fprintf(out, "placement: %s\n", st.Placement)
 	keys, reached := 0, 0
 	for _, n := range st.Nodes {
-		switch {
-		case n.Unavailable != "":
+		if n.Unavailable != "" {
 			fmt.Fprintf(out, "%s  %s  unavailable: %s\n", n.Name, n.URL, n.Unavailable)
 			continue
-		case n.Broken != "":
-			fmt.Fprintf(out, "%s  %s  %d keys, broken: %s\n", n.Name, n.URL, n.Keys, n.Broken)
-		default:
-			fmt.Fprintf(out, "%s  %s  %d keys\n", n.Name, n.URL, n.Keys)
 		}
+		line := fmt.Sprintf("%s  %s  %d keys", n.Name, n.URL, n.Keys)
+		if n.Frozen {
+			line += ", frozen"
+		}
+		if n.Broken != "" {
+			line += ", broken: " + n.Broken
+		}
+		fmt.Fprintln(out, line)
 		keys += n.Keys
 		reached++
 	}

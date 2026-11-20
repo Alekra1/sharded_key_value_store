@@ -106,6 +106,7 @@ func (rt *Router) nodeReport(ctx context.Context, id placement.NodeID) protocol.
 		return report
 	}
 	report.Keys = st.Keys
+	report.Frozen = st.Frozen
 	report.Broken = st.Broken
 	return report
 }
