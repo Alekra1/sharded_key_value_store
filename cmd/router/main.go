@@ -52,14 +52,10 @@ func serve(c config) error {
 		return errors.New("-placement and -nodes are only used with -init")
 	}
 
-	p, urls, err := router.LoadState(c.statePath)
+	rt, err := router.Open(c.statePath)
 	if errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("no cluster state in %s; start with -init to create a cluster", c.statePath)
 	}
-	if err != nil {
-		return err
-	}
-	rt, err := router.New(p, urls)
 	if err != nil {
 		return err
 	}
@@ -68,7 +64,7 @@ func serve(c config) error {
 	if err != nil {
 		return err
 	}
-	log.Printf("listening on %s, nodes %v", c.addr, p.Members())
+	log.Printf("listening on %s, state in %s", c.addr, c.statePath)
 	return http.Serve(ln, rt.Handler())
 }
 

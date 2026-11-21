@@ -33,7 +33,7 @@ func TestStateRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	loaded, loadedURLs, err := LoadState(path)
+	s, loaded, err := loadState(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,8 +45,8 @@ func TestStateRoundTrip(t *testing.T) {
 			t.Errorf("owner of %q changed after load", key)
 		}
 	}
-	if !maps.Equal(loadedURLs, urls) {
-		t.Errorf("urls %v, want %v", loadedURLs, urls)
+	if !maps.Equal(s.URLs, urls) {
+		t.Errorf("urls %v, want %v", s.URLs, urls)
 	}
 }
 
@@ -68,7 +68,7 @@ func TestSaveStateReplacesFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	loaded, _, err := LoadState(path)
+	_, loaded, err := loadState(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,15 +89,15 @@ func TestInitState(t *testing.T) {
 	if err := InitState(path, "ring", testURLs, 10, 0); err != nil {
 		t.Fatal(err)
 	}
-	p, urls, err := LoadState(path)
+	s, p, err := loadState(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := []placement.NodeID{"A", "B", "C"}; !slices.Equal(p.Members(), want) {
 		t.Errorf("members %v, want %v", p.Members(), want)
 	}
-	if !maps.Equal(urls, testURLs) {
-		t.Errorf("urls %v, want %v", urls, testURLs)
+	if !maps.Equal(s.URLs, testURLs) {
+		t.Errorf("urls %v, want %v", s.URLs, testURLs)
 	}
 
 	before, err := os.ReadFile(path)
@@ -128,7 +128,7 @@ func TestInitStateBadAlgorithmWritesNothing(t *testing.T) {
 
 func TestLoadStateErrors(t *testing.T) {
 	dir := t.TempDir()
-	if _, _, err := LoadState(filepath.Join(dir, "missing.json")); !errors.Is(err, fs.ErrNotExist) {
+	if _, _, err := loadState(filepath.Join(dir, "missing.json")); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("missing file: got %v, want fs.ErrNotExist", err)
 	}
 
@@ -142,7 +142,7 @@ func TestLoadStateErrors(t *testing.T) {
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if p, _, err := LoadState(path); err == nil || p != nil {
+		if _, p, err := loadState(path); err == nil || p != nil {
 			t.Errorf("%s: got %v, %v; want nil and an error", name, p, err)
 		}
 	}

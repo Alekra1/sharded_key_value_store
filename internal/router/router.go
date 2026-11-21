@@ -17,22 +17,27 @@ import (
 )
 
 type Router struct {
+	statePath string
 	placement placement.Placement
 	nodes     map[placement.NodeID]string
 	client    *http.Client
 }
 
-// New takes the base URL of every member, for example
-// "B": "http://localhost:8002".
-func New(p placement.Placement, nodes map[placement.NodeID]string) (*Router, error) {
+// Open starts a router from the state file at path.
+func Open(path string) (*Router, error) {
+	s, p, err := loadState(path)
+	if err != nil {
+		return nil, err
+	}
 	for _, id := range p.Members() {
-		if nodes[id] == "" {
-			return nil, fmt.Errorf("no URL for node %q", id)
+		if s.URLs[id] == "" {
+			return nil, fmt.Errorf("%s: no URL for node %q", path, id)
 		}
 	}
 	return &Router{
+		statePath: path,
 		placement: p,
-		nodes:     maps.Clone(nodes),
+		nodes:     maps.Clone(s.URLs),
 		client:    &http.Client{Timeout: 5 * time.Second},
 	}, nil
 }

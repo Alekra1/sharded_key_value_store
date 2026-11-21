@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -33,15 +34,11 @@ func echoNode(t *testing.T, id string) *httptest.Server {
 
 func newRouter(t *testing.T, nodes map[placement.NodeID]string) *Router {
 	t.Helper()
-	ids := make([]placement.NodeID, 0, len(nodes))
-	for id := range nodes {
-		ids = append(ids, id)
-	}
-	p, err := placement.NewRendezvous(ids)
-	if err != nil {
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := InitState(path, "rendezvous", nodes, 0, 0); err != nil {
 		t.Fatal(err)
 	}
-	rt, err := New(p, nodes)
+	rt, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,13 +175,17 @@ func TestNodeTimeout(t *testing.T) {
 	wantError(t, do(rt, "PUT", "/kv?key=cat", `{"value":"x"}`), http.StatusGatewayTimeout)
 }
 
-func TestNewRejectsMissingURL(t *testing.T) {
+func TestOpenRejectsMissingURL(t *testing.T) {
 	p, err := placement.NewRendezvous([]placement.NodeID{"A", "B"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := New(p, map[placement.NodeID]string{"A": "http://localhost:8001"}); err == nil {
-		t.Error("New accepted a member without a URL")
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := saveState(path, p, map[placement.NodeID]string{"A": "http://localhost:8001"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(path); err == nil {
+		t.Error("Open accepted a member without a URL")
 	}
 }
 

@@ -45,20 +45,20 @@ func saveState(path string, p placement.Placement, urls map[placement.NodeID]str
 	return replaceFile(path, data)
 }
 
-func LoadState(path string) (placement.Placement, map[placement.NodeID]string, error) {
+func loadState(path string) (state, placement.Placement, error) {
+	var s state
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, nil, err
+		return s, nil, err
 	}
-	var s state
 	if err := json.Unmarshal(data, &s); err != nil {
-		return nil, nil, fmt.Errorf("%s: %w", path, err)
+		return s, nil, fmt.Errorf("%s: %w", path, err)
 	}
 	p, err := placement.Load(s.Placement)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%s: %w", path, err)
+		return s, nil, fmt.Errorf("%s: %w", path, err)
 	}
-	return p, s.URLs, nil
+	return s, p, nil
 }
 
 func replaceFile(path string, data []byte) error {
