@@ -117,6 +117,11 @@ func (c client) status(out io.Writer) error {
 	}
 
 	fmt.Fprintf(out, "placement: %s\n", st.Placement)
+	if st.Maintenance {
+		fmt.Fprintln(out, "mode: maintenance")
+	} else {
+		fmt.Fprintln(out, "mode: normal")
+	}
 	keys, reached := 0, 0
 	for _, n := range st.Nodes {
 		if n.Unavailable != "" {
