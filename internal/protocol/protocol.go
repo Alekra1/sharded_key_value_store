@@ -23,8 +23,9 @@ type NodeStatus struct {
 // ClusterStatus is the router's reply to GET /status. Placement holds the
 // placement's saved form, the same bytes as in the router's state file.
 type ClusterStatus struct {
-	Placement json.RawMessage `json:"placement"`
-	Nodes     []NodeReport    `json:"nodes"`
+	Placement   json.RawMessage `json:"placement"`
+	Maintenance bool            `json:"maintenance,omitempty"`
+	Nodes       []NodeReport    `json:"nodes"`
 }
 
 type NodeReport struct {

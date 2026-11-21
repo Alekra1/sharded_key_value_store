@@ -59,6 +59,9 @@ func serve(c config) error {
 	if err != nil {
 		return err
 	}
+	if rt.Paused() {
+		log.Printf("in maintenance; client requests are refused until the run is resumed")
+	}
 
 	ln, err := net.Listen("tcp", c.addr)
 	if err != nil {

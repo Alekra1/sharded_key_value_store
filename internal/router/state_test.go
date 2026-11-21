@@ -29,13 +29,16 @@ func TestStateRoundTrip(t *testing.T) {
 	}
 	urls := map[placement.NodeID]string{"A": "http://a", "C": "http://c", "D": "http://d"}
 	path := filepath.Join(t.TempDir(), "state.json")
-	if err := saveState(path, p, urls); err != nil {
+	if err := saveState(path, p, urls, true); err != nil {
 		t.Fatal(err)
 	}
 
 	s, loaded, err := loadState(path)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !s.Maintenance {
+		t.Error("maintenance mode was not saved")
 	}
 	if !slices.Equal(loaded.Members(), p.Members()) {
 		t.Errorf("members %v, want %v", loaded.Members(), p.Members())
@@ -61,10 +64,10 @@ func TestSaveStateReplacesFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := saveState(path, first, testURLs); err != nil {
+	if err := saveState(path, first, testURLs, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := saveState(path, second, testURLs); err != nil {
+	if err := saveState(path, second, testURLs, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -92,6 +95,9 @@ func TestInitState(t *testing.T) {
 	s, p, err := loadState(path)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if s.Maintenance {
+		t.Error("a new cluster starts in maintenance")
 	}
 	if want := []placement.NodeID{"A", "B", "C"}; !slices.Equal(p.Members(), want) {
 		t.Errorf("members %v, want %v", p.Members(), want)

@@ -15,8 +15,9 @@ import (
 // state is the router's file. Placement holds the bytes from Save as they
 // are, so the file shows them as JSON instead of an encoded string.
 type state struct {
-	Placement json.RawMessage             `json:"placement"`
-	URLs      map[placement.NodeID]string `json:"urls"`
+	Placement   json.RawMessage             `json:"placement"`
+	URLs        map[placement.NodeID]string `json:"urls"`
+	Maintenance bool                        `json:"maintenance,omitempty"`
 }
 
 // InitState creates the state file of a new cluster. It refuses to replace an
@@ -30,15 +31,15 @@ func InitState(path, algorithm string, urls map[placement.NodeID]string, vnodes,
 	if err != nil {
 		return err
 	}
-	return saveState(path, p, urls)
+	return saveState(path, p, urls, false)
 }
 
-func saveState(path string, p placement.Placement, urls map[placement.NodeID]string) error {
+func saveState(path string, p placement.Placement, urls map[placement.NodeID]string, maintenance bool) error {
 	saved, err := p.Save()
 	if err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(state{Placement: saved, URLs: urls}, "", "  ")
+	data, err := json.MarshalIndent(state{Placement: saved, URLs: urls, Maintenance: maintenance}, "", "  ")
 	if err != nil {
 		return err
 	}

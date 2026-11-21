@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/Alekra1/sharded_key_value_store/internal/placement"
@@ -21,9 +22,15 @@ type Router struct {
 	placement placement.Placement
 	nodes     map[placement.NodeID]string
 	client    *http.Client
+
+	// Every client request holds gate for reading while it runs. Pause takes
+	// it for writing, so Pause waits for the requests in progress.
+	gate   sync.RWMutex
+	paused bool
 }
 
-// Open starts a router from the state file at path.
+// Open starts a router from the state file at path. Pause and Unpause save
+// the mode to the same file.
 func Open(path string) (*Router, error) {
 	s, p, err := loadState(path)
 	if err != nil {
@@ -39,7 +46,37 @@ func Open(path string) (*Router, error) {
 		placement: p,
 		nodes:     maps.Clone(s.URLs),
 		client:    &http.Client{Timeout: 5 * time.Second},
+		paused:    s.Maintenance,
 	}, nil
+}
+
+// Pause refuses new client requests and returns when the requests in progress
+// are finished. The mode is saved first, so a restarted router stays paused.
+func (rt *Router) Pause() error {
+	return rt.setPaused(true)
+}
+
+func (rt *Router) Unpause() error {
+	return rt.setPaused(false)
+}
+
+func (rt *Router) setPaused(paused bool) error {
+	rt.gate.Lock()
+	defer rt.gate.Unlock()
+	if rt.paused == paused {
+		return nil
+	}
+	if err := saveState(rt.statePath, rt.placement, rt.nodes, paused); err != nil {
+		return err
+	}
+	rt.paused = paused
+	return nil
+}
+
+func (rt *Router) Paused() bool {
+	rt.gate.RLock()
+	defer rt.gate.RUnlock()
+	return rt.paused
 }
 
 func (rt *Router) Handler() http.Handler {
@@ -52,6 +89,13 @@ func (rt *Router) Handler() http.Handler {
 }
 
 func (rt *Router) forward(w http.ResponseWriter, r *http.Request) {
+	rt.gate.RLock()
+	defer rt.gate.RUnlock()
+	if rt.paused {
+		writeError(w, http.StatusServiceUnavailable, "cluster is in maintenance; try again later")
+		return
+	}
+
 	key := r.URL.Query().Get("key")
 	if key == "" {
 		writeError(w, http.StatusBadRequest, "key is empty")
@@ -91,13 +135,20 @@ func (rt *Router) forward(w http.ResponseWriter, r *http.Request) {
 // status asks the nodes one at a time, so a slow node delays the reply by up
 // to the client timeout.
 func (rt *Router) status(w http.ResponseWriter, r *http.Request) {
+	// The nodes are asked after the gate is released, so a slow node does not
+	// hold up Pause.
+	rt.gate.RLock()
 	saved, err := rt.placement.Save()
+	members := rt.placement.Members()
+	paused := rt.paused
+	rt.gate.RUnlock()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	report := protocol.ClusterStatus{Placement: saved}
-	for _, id := range rt.placement.Members() {
+
+	report := protocol.ClusterStatus{Placement: saved, Maintenance: paused}
+	for _, id := range members {
 		report.Nodes = append(report.Nodes, rt.nodeReport(r.Context(), id))
 	}
 	writeJSON(w, http.StatusOK, report)

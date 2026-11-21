@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -181,7 +183,7 @@ func TestOpenRejectsMissingURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "state.json")
-	if err := saveState(path, p, map[placement.NodeID]string{"A": "http://localhost:8001"}); err != nil {
+	if err := saveState(path, p, map[placement.NodeID]string{"A": "http://localhost:8001"}, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Open(path); err == nil {
@@ -245,4 +247,123 @@ func TestStatus(t *testing.T) {
 	if d := got.Nodes[3]; d.Name != "D" || d.Keys != 0 || d.Unavailable == "" {
 		t.Errorf("D: %+v, want unavailable", d)
 	}
+}
+
+func readClusterStatus(t *testing.T, rt *Router) protocol.ClusterStatus {
+	t.Helper()
+	rec := do(rt, "GET", "/status", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	var st protocol.ClusterStatus
+	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
+		t.Fatalf("reply %q: %v", rec.Body.String(), err)
+	}
+	return st
+}
+
+func TestPause(t *testing.T) {
+	rt := threeEchoNodes(t)
+	if err := rt.Pause(); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Pause(); err != nil {
+		t.Fatalf("second Pause: %v", err)
+	}
+
+	wantError(t, do(rt, "GET", "/kv?key=cat", ""), http.StatusServiceUnavailable)
+	wantError(t, do(rt, "PUT", "/kv?key=cat", `{"value":"x"}`), http.StatusServiceUnavailable)
+	wantError(t, do(rt, "DELETE", "/kv?key=cat", ""), http.StatusServiceUnavailable)
+	if st := readClusterStatus(t, rt); !st.Maintenance || len(st.Nodes) != 3 {
+		t.Errorf("status while paused: maintenance %v, %d nodes; want true, 3", st.Maintenance, len(st.Nodes))
+	}
+
+	if err := rt.Unpause(); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Unpause(); err != nil {
+		t.Fatalf("second Unpause: %v", err)
+	}
+	readEcho(t, do(rt, "GET", "/kv?key=cat", ""))
+	if st := readClusterStatus(t, rt); st.Maintenance {
+		t.Error("status after Unpause still shows maintenance")
+	}
+}
+
+func TestPauseWaitsForRequestsInProgress(t *testing.T) {
+	arrived := make(chan struct{})
+	release := make(chan struct{})
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(arrived)
+		<-release
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(slow.Close)
+	var once sync.Once
+	// Cleanups run last first, so the handler is released before Close waits for it.
+	t.Cleanup(func() { once.Do(func() { close(release) }) })
+
+	rt := newRouter(t, map[placement.NodeID]string{"A": slow.URL})
+	inProgress := make(chan *httptest.ResponseRecorder)
+	go func() { inProgress <- do(rt, "PUT", "/kv?key=cat", `{"value":"x"}`) }()
+	<-arrived
+
+	paused := make(chan error)
+	go func() { paused <- rt.Pause() }()
+	select {
+	case <-paused:
+		t.Fatal("Pause returned while a request was in progress")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	once.Do(func() { close(release) })
+	if rec := <-inProgress; rec.Code != http.StatusNoContent {
+		t.Errorf("request in progress: status %d, want 204 from the node", rec.Code)
+	}
+	if err := <-paused; err != nil {
+		t.Fatal(err)
+	}
+	wantError(t, do(rt, "PUT", "/kv?key=cat", `{"value":"y"}`), http.StatusServiceUnavailable)
+}
+
+func TestPauseSurvivesRestart(t *testing.T) {
+	rt := threeEchoNodes(t)
+	if err := rt.Pause(); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted, err := Open(rt.statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !restarted.Paused() {
+		t.Fatal("router is not paused after a restart")
+	}
+	wantError(t, do(restarted, "GET", "/kv?key=cat", ""), http.StatusServiceUnavailable)
+
+	if err := restarted.Unpause(); err != nil {
+		t.Fatal(err)
+	}
+	again, err := Open(rt.statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Paused() {
+		t.Error("router is paused after Unpause and a restart")
+	}
+	if !slices.Equal(again.placement.Members(), rt.placement.Members()) {
+		t.Errorf("members %v after restarts, want %v", again.placement.Members(), rt.placement.Members())
+	}
+}
+
+func TestPauseSaveFails(t *testing.T) {
+	rt := threeEchoNodes(t)
+	rt.statePath = filepath.Join(t.TempDir(), "missing-dir", "state.json")
+	if err := rt.Pause(); err == nil {
+		t.Fatal("Pause succeeded without saving the mode")
+	}
+	if rt.Paused() {
+		t.Error("router is paused although the mode was not saved")
+	}
+	readEcho(t, do(rt, "GET", "/kv?key=cat", ""))
 }
