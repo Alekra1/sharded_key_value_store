@@ -144,7 +144,7 @@ func (s *Store) Put(key, value string) error {
 	if s.frozen {
 		return ErrFrozen
 	}
-	if err := s.writeEntry(entry{op: opPut, key: key, value: value}); err != nil {
+	if err := s.writeEntries(entry{op: opPut, key: key, value: value}); err != nil {
 		return err
 	}
 	s.data[key] = value
@@ -174,7 +174,7 @@ func (s *Store) Delete(key string) error {
 	if _, ok := s.data[key]; !ok {
 		return nil
 	}
-	if err := s.writeEntry(entry{op: opDelete, key: key}); err != nil {
+	if err := s.writeEntries(entry{op: opDelete, key: key}); err != nil {
 		return err
 	}
 	delete(s.data, key)
@@ -232,8 +232,12 @@ func (s *Store) Close() error {
 
 // After a failed write the file may end inside an entry. Writing more would
 // put that damage in the middle of the log, where replay can't cut it off.
-func (s *Store) writeEntry(e entry) error {
-	if _, err := s.log.Write(encodeEntry(e)); err != nil {
+func (s *Store) writeEntries(entries ...entry) error {
+	var buf []byte
+	for _, e := range entries {
+		buf = append(buf, encodeEntry(e)...)
+	}
+	if _, err := s.log.Write(buf); err != nil {
 		s.broken = fmt.Errorf("store stopped after a failed log write: %w", err)
 		return s.broken
 	}
