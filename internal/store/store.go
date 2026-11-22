@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"sync"
@@ -222,6 +223,68 @@ func fileExists(path string) (bool, error) {
 		return false, nil
 	}
 	return err == nil, err
+}
+
+// Records returns a copy of every key and value in the store.
+func (s *Store) Records() map[string]string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return maps.Clone(s.data)
+}
+
+// PutAll and DeleteAll are for moving data in maintenance, so they work on a
+// frozen store. Each call writes all its entries with one sync.
+func (s *Store) PutAll(records map[string]string) error {
+	entries := make([]entry, 0, len(records))
+	for key, value := range records {
+		if err := checkKey(key); err != nil {
+			return fmt.Errorf("key %q: %w", key, err)
+		}
+		if len(value) > maxValueLen {
+			return fmt.Errorf("key %q: %w", key, ErrValueTooLong)
+		}
+		entries = append(entries, entry{op: opPut, key: key, value: value})
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.broken != nil {
+		return s.broken
+	}
+	if err := s.writeEntries(entries...); err != nil {
+		return err
+	}
+	for _, e := range entries {
+		s.data[e.key] = e.value
+	}
+	return nil
+}
+
+func (s *Store) DeleteAll(keys []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.broken != nil {
+		return s.broken
+	}
+	var entries []entry
+	for _, key := range keys {
+		if _, ok := s.data[key]; ok {
+			entries = append(entries, entry{op: opDelete, key: key})
+		}
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	if err := s.writeEntries(entries...); err != nil {
+		return err
+	}
+	for _, e := range entries {
+		delete(s.data, e.key)
+	}
+	return nil
 }
 
 func (s *Store) Close() error {

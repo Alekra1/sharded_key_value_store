@@ -430,3 +430,91 @@ func TestFreezeStopsWritesInProgress(t *testing.T) {
 		t.Errorf("%d keys in the store, %d puts acknowledged", final, acked)
 	}
 }
+
+func TestPutAllAndDeleteAll(t *testing.T) {
+	s, dir := newStore(t)
+	mustPut(t, s, "cat", "meow")
+	if err := s.Freeze(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.PutAll(map[string]string{"cat": "purr", "dog": "woof", "fox": "", "owl": "hoot"}); err != nil {
+		t.Fatalf("PutAll on a frozen store: %v", err)
+	}
+	if err := s.DeleteAll([]string{"owl", "missing"}); err != nil {
+		t.Fatalf("DeleteAll on a frozen store: %v", err)
+	}
+	want := map[string]string{"cat": "purr", "dog": "woof", "fox": ""}
+	if got := s.Records(); !maps.Equal(got, want) {
+		t.Fatalf("Records() = %v, want %v", got, want)
+	}
+
+	if err := s.PutAll(map[string]string{}); err != nil {
+		t.Errorf("PutAll with no records: %v", err)
+	}
+	if err := s.DeleteAll(nil); err != nil {
+		t.Errorf("DeleteAll with no keys: %v", err)
+	}
+
+	s.Close()
+	s, cut := reopen(t, dir)
+	if cut != 0 {
+		t.Errorf("reopen cut %d bytes", cut)
+	}
+	if got := s.Records(); !maps.Equal(got, want) {
+		t.Errorf("after reopen Records() = %v, want %v", got, want)
+	}
+}
+
+func TestPutAllRejectsBadInputAndWritesNothing(t *testing.T) {
+	s, dir := newStore(t)
+	cases := map[string]map[string]string{
+		"empty key":  {"cat": "meow", "": "x"},
+		"long key":   {"cat": "meow", strings.Repeat("k", maxKeyLen+1): "x"},
+		"long value": {"cat": "meow", "dog": strings.Repeat("v", maxValueLen+1)},
+	}
+	for name, records := range cases {
+		if err := s.PutAll(records); err == nil {
+			t.Errorf("%s: PutAll accepted it", name)
+		}
+	}
+	if got := s.Records(); len(got) != 0 {
+		t.Errorf("Records() = %v after refused PutAll calls, want none", got)
+	}
+	s.Close()
+	s, _ = reopen(t, dir)
+	if got := s.Records(); len(got) != 0 {
+		t.Errorf("after reopen Records() = %v, want none", got)
+	}
+}
+
+func TestRecordsIsACopy(t *testing.T) {
+	s, _ := newStore(t)
+	mustPut(t, s, "cat", "meow")
+	got := s.Records()
+	got["cat"] = "changed"
+	got["dog"] = "added"
+	if v, _ := s.Get("cat"); v != "meow" {
+		t.Errorf("Get(cat) = %q after changing the copy, want meow", v)
+	}
+	if _, ok := s.Get("dog"); ok {
+		t.Error("a key added to the copy is in the store")
+	}
+}
+
+func TestBrokenStoreRefusesBulkWrites(t *testing.T) {
+	s, _ := newStore(t)
+	mustPut(t, s, "cat", "meow")
+	s.log.Close()
+	first := s.Put("dog", "woof")
+
+	if err := s.PutAll(map[string]string{"fox": "ring"}); !errors.Is(err, first) {
+		t.Errorf("PutAll: got %v, want %v", err, first)
+	}
+	if err := s.DeleteAll([]string{"cat"}); !errors.Is(err, first) {
+		t.Errorf("DeleteAll: got %v, want %v", err, first)
+	}
+	if want := map[string]string{"cat": "meow"}; !maps.Equal(s.Records(), want) {
+		t.Errorf("Records() = %v, want %v", s.Records(), want)
+	}
+}
