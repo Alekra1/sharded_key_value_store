@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -180,4 +181,48 @@ func TestFreeze(t *testing.T) {
 	}
 
 	wantStatus(t, do(s, "GET", "/freeze", ""), http.StatusMethodNotAllowed)
+}
+
+func readRecords(t *testing.T, rec *httptest.ResponseRecorder) map[string]string {
+	t.Helper()
+	wantStatus(t, rec, http.StatusOK)
+	var body protocol.Records
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("reply %q: %v", rec.Body.String(), err)
+	}
+	return body.Records
+}
+
+func TestRecords(t *testing.T) {
+	s, _ := newServer(t)
+	if got := readRecords(t, do(s, "GET", "/records", "")); got == nil || len(got) != 0 {
+		t.Errorf("empty node: %#v, want an empty map", got)
+	}
+	wantStatus(t, do(s, "PUT", "/kv?key=cat", `{"value":"meow"}`), http.StatusNoContent)
+	wantStatus(t, do(s, "POST", "/freeze", ""), http.StatusNoContent)
+
+	wantStatus(t, do(s, "PUT", "/records", `{"records":{"dog":"woof","user 1+2":"a b","owl":"hoot"}}`), http.StatusNoContent)
+	wantStatus(t, do(s, "DELETE", "/records", `{"keys":["owl","missing"]}`), http.StatusNoContent)
+
+	want := map[string]string{"cat": "meow", "dog": "woof", "user 1+2": "a b"}
+	if got := readRecords(t, do(s, "GET", "/records", "")); !maps.Equal(got, want) {
+		t.Errorf("records %v, want %v", got, want)
+	}
+}
+
+func TestRecordsBadRequests(t *testing.T) {
+	s, _ := newServer(t)
+	cases := []struct{ method, body string }{
+		{"PUT", ""},
+		{"PUT", "not json"},
+		{"PUT", "{}"},
+		{"PUT", `{"records":{"":"x"}}`},
+		{"DELETE", ""},
+		{"DELETE", "{}"},
+		{"DELETE", `{"keys":"cat"}`},
+	}
+	for _, c := range cases {
+		wantError(t, do(s, c.method, "/records", c.body), http.StatusBadRequest)
+	}
+	wantStatus(t, do(s, "POST", "/records", "{}"), http.StatusMethodNotAllowed)
 }

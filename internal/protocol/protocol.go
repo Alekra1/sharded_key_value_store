@@ -13,6 +13,17 @@ type Error struct {
 	Error string `json:"error"`
 }
 
+// Records is the body of GET and PUT /records on a node, which move data
+// during maintenance.
+type Records struct {
+	Records map[string]string `json:"records"`
+}
+
+// Keys is the body of DELETE /records on a node.
+type Keys struct {
+	Keys []string `json:"keys"`
+}
+
 // NodeStatus is a node's reply to GET /status.
 type NodeStatus struct {
 	Keys   int    `json:"keys"`

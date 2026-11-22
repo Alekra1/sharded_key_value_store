@@ -11,8 +11,10 @@ import (
 )
 
 var (
-	errKeyNotFound  = errors.New("key not found")
-	errMissingValue = errors.New(`body has no "value" field`)
+	errKeyNotFound    = errors.New("key not found")
+	errMissingValue   = errors.New(`body has no "value" field`)
+	errMissingRecords = errors.New(`body has no "records" field`)
+	errMissingKeys    = errors.New(`body has no "keys" field`)
 )
 
 type server struct {
@@ -27,6 +29,9 @@ func (s *server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /status", s.status)
 	mux.HandleFunc("POST /freeze", s.freeze)
 	mux.HandleFunc("POST /unfreeze", s.unfreeze)
+	mux.HandleFunc("GET /records", s.records)
+	mux.HandleFunc("PUT /records", s.putRecords)
+	mux.HandleFunc("DELETE /records", s.deleteRecords)
 	return mux
 }
 
@@ -91,6 +96,44 @@ func (s *server) freeze(w http.ResponseWriter, r *http.Request) {
 func (s *server) unfreeze(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.Unfreeze(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) records(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, protocol.Records{Records: s.store.Records()})
+}
+
+func (s *server) putRecords(w http.ResponseWriter, r *http.Request) {
+	var body protocol.Records
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("body is not valid JSON: %w", err))
+		return
+	}
+	if body.Records == nil {
+		writeError(w, http.StatusBadRequest, errMissingRecords)
+		return
+	}
+	if err := s.store.PutAll(body.Records); err != nil {
+		writeError(w, storeErrorStatus(err), err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) deleteRecords(w http.ResponseWriter, r *http.Request) {
+	var body protocol.Keys
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("body is not valid JSON: %w", err))
+		return
+	}
+	if body.Keys == nil {
+		writeError(w, http.StatusBadRequest, errMissingKeys)
+		return
+	}
+	if err := s.store.DeleteAll(body.Keys); err != nil {
+		writeError(w, storeErrorStatus(err), err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
