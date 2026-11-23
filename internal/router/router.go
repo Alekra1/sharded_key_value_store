@@ -27,6 +27,9 @@ type Router struct {
 	// it for writing, so Pause waits for the requests in progress.
 	gate   sync.RWMutex
 	paused bool
+
+	// Only one maintenance run may proceed at a time.
+	maint sync.Mutex
 }
 
 // Open starts a router from the state file at path. Pause and Unpause save
@@ -140,6 +143,7 @@ func (rt *Router) status(w http.ResponseWriter, r *http.Request) {
 	rt.gate.RLock()
 	saved, err := rt.placement.Save()
 	members := rt.placement.Members()
+	urls := maps.Clone(rt.nodes)
 	paused := rt.paused
 	rt.gate.RUnlock()
 	if err != nil {
@@ -149,13 +153,13 @@ func (rt *Router) status(w http.ResponseWriter, r *http.Request) {
 
 	report := protocol.ClusterStatus{Placement: saved, Maintenance: paused}
 	for _, id := range members {
-		report.Nodes = append(report.Nodes, rt.nodeReport(r.Context(), id))
+		report.Nodes = append(report.Nodes, rt.nodeReport(r.Context(), id, urls[id]))
 	}
 	writeJSON(w, http.StatusOK, report)
 }
 
-func (rt *Router) nodeReport(ctx context.Context, id placement.NodeID) protocol.NodeReport {
-	report := protocol.NodeReport{Name: string(id), URL: rt.nodes[id]}
+func (rt *Router) nodeReport(ctx context.Context, id placement.NodeID, nodeURL string) protocol.NodeReport {
+	report := protocol.NodeReport{Name: string(id), URL: nodeURL}
 	st, err := rt.askStatus(ctx, report.URL)
 	if err != nil {
 		report.Unavailable = err.Error()
