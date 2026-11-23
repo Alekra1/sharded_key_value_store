@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/Alekra1/sharded_key_value_store/internal/placement"
 	"github.com/Alekra1/sharded_key_value_store/internal/protocol"
@@ -19,25 +20,25 @@ import (
 var ErrMaintenanceRunning = errors.New("maintenance is already running")
 
 // AddNode adds a running node to the cluster and moves the keys it now owns.
-func (rt *Router) AddNode(ctx context.Context, id placement.NodeID, nodeURL string) error {
+func (rt *Router) AddNode(ctx context.Context, id placement.NodeID, nodeURL string) (protocol.MoveReport, error) {
 	nodeURL = strings.TrimSuffix(strings.TrimSpace(nodeURL), "/")
 	if id == "" {
-		return errors.New("node id is empty")
+		return protocol.MoveReport{}, errors.New("node id is empty")
 	}
 	if nodeURL == "" {
-		return errors.New("node url is empty")
+		return protocol.MoveReport{}, errors.New("node url is empty")
 	}
 	if !rt.maint.TryLock() {
-		return ErrMaintenanceRunning
+		return protocol.MoveReport{}, ErrMaintenanceRunning
 	}
 	defer rt.maint.Unlock()
 
 	oldMembers, next, oldURLs, err := rt.clonePlacement()
 	if err != nil {
-		return err
+		return protocol.MoveReport{}, err
 	}
 	if err := next.Add(id); err != nil {
-		return err
+		return protocol.MoveReport{}, err
 	}
 
 	nextURLs := maps.Clone(oldURLs)
@@ -46,21 +47,21 @@ func (rt *Router) AddNode(ctx context.Context, id placement.NodeID, nodeURL stri
 }
 
 // RemoveNode moves all keys off id and removes it from the cluster.
-func (rt *Router) RemoveNode(ctx context.Context, id placement.NodeID) error {
+func (rt *Router) RemoveNode(ctx context.Context, id placement.NodeID) (protocol.MoveReport, error) {
 	if id == "" {
-		return errors.New("node id is empty")
+		return protocol.MoveReport{}, errors.New("node id is empty")
 	}
 	if !rt.maint.TryLock() {
-		return ErrMaintenanceRunning
+		return protocol.MoveReport{}, ErrMaintenanceRunning
 	}
 	defer rt.maint.Unlock()
 
 	oldMembers, next, oldURLs, err := rt.clonePlacement()
 	if err != nil {
-		return err
+		return protocol.MoveReport{}, err
 	}
 	if err := next.Remove(id); err != nil {
-		return err
+		return protocol.MoveReport{}, err
 	}
 
 	nextURLs := maps.Clone(oldURLs)
@@ -93,25 +94,30 @@ func (rt *Router) redistribute(
 	next placement.Placement,
 	nextURLs map[placement.NodeID]string,
 	allURLs map[placement.NodeID]string,
-) error {
+) (protocol.MoveReport, error) {
+	var report protocol.MoveReport
+	totalStart := time.Now()
 	allIDs := slices.Sorted(maps.Keys(allURLs))
 
+	freezeStart := time.Now()
 	if err := rt.Pause(); err != nil {
-		return fmt.Errorf("pause router: %w", err)
+		return report, fmt.Errorf("pause router: %w", err)
 	}
 	for _, id := range allIDs {
 		if err := rt.postNode(ctx, allURLs[id]+"/freeze"); err != nil {
-			return fmt.Errorf("freeze node %s: %w", id, err)
+			return report, fmt.Errorf("freeze node %s: %w", id, err)
 		}
 	}
+	report.FreezeMs = time.Since(freezeStart).Milliseconds()
 
+	copyStart := time.Now()
 	toCopy := make(map[placement.NodeID]map[string]string)
 	toDelete := make(map[placement.NodeID][]string)
 
 	for _, src := range oldMembers {
 		records, err := rt.getRecords(ctx, allURLs[src])
 		if err != nil {
-			return fmt.Errorf("read records from %s: %w", src, err)
+			return report, fmt.Errorf("read records from %s: %w", src, err)
 		}
 		for key, value := range records {
 			dst := next.Owner(key)
@@ -123,46 +129,54 @@ func (rt *Router) redistribute(
 			}
 			toCopy[dst][key] = value
 			toDelete[src] = append(toDelete[src], key)
+			report.Records++
+			report.Bytes += len(key) + len(value)
 		}
 	}
 
 	for _, dst := range slices.Sorted(maps.Keys(toCopy)) {
 		if err := rt.putRecords(ctx, allURLs[dst], toCopy[dst]); err != nil {
-			return fmt.Errorf("copy records to %s: %w", dst, err)
+			return report, fmt.Errorf("copy records to %s: %w", dst, err)
 		}
 	}
+	report.CopyMs = time.Since(copyStart).Milliseconds()
 
+	verifyStart := time.Now()
 	for _, dst := range slices.Sorted(maps.Keys(toCopy)) {
 		got, err := rt.getRecords(ctx, allURLs[dst])
 		if err != nil {
-			return fmt.Errorf("verify records on %s: %w", dst, err)
+			return report, fmt.Errorf("verify records on %s: %w", dst, err)
 		}
 		for key, wantValue := range toCopy[dst] {
 			gotValue, ok := got[key]
 			if !ok || gotValue != wantValue {
-				return fmt.Errorf("verify failed on %s for key %q", dst, key)
+				return report, fmt.Errorf("verify failed on %s for key %q", dst, key)
 			}
 		}
 	}
 
 	if err := rt.switchPlacement(next, nextURLs); err != nil {
-		return fmt.Errorf("save new placement: %w", err)
+		return report, fmt.Errorf("save new placement: %w", err)
 	}
+	report.VerifyMs = time.Since(verifyStart).Milliseconds()
 
+	cleanupStart := time.Now()
 	for _, src := range slices.Sorted(maps.Keys(toDelete)) {
 		if err := rt.deleteRecords(ctx, allURLs[src], toDelete[src]); err != nil {
-			return fmt.Errorf("clean up %s: %w", src, err)
+			return report, fmt.Errorf("clean up %s: %w", src, err)
 		}
 	}
 	for _, id := range allIDs {
 		if err := rt.postNode(ctx, allURLs[id]+"/unfreeze"); err != nil {
-			return fmt.Errorf("unfreeze node %s: %w", id, err)
+			return report, fmt.Errorf("unfreeze node %s: %w", id, err)
 		}
 	}
 	if err := rt.Unpause(); err != nil {
-		return fmt.Errorf("unpause router: %w", err)
+		return report, fmt.Errorf("unpause router: %w", err)
 	}
-	return nil
+	report.CleanupMs = time.Since(cleanupStart).Milliseconds()
+	report.TotalMs = time.Since(totalStart).Milliseconds()
+	return report, nil
 }
 
 func (rt *Router) switchPlacement(next placement.Placement, nextURLs map[placement.NodeID]string) error {

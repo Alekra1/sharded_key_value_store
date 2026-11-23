@@ -24,6 +24,18 @@ type Keys struct {
 	Keys []string `json:"keys"`
 }
 
+// MoveReport records how much data a maintenance run moved and how long each
+// stage took.
+type MoveReport struct {
+	Records   int   `json:"records"`
+	Bytes     int   `json:"bytes"`
+	FreezeMs  int64 `json:"freeze_ms"`
+	CopyMs    int64 `json:"copy_ms"`
+	VerifyMs  int64 `json:"verify_ms"`
+	CleanupMs int64 `json:"cleanup_ms"`
+	TotalMs   int64 `json:"total_ms"`
+}
+
 // NodeStatus is a node's reply to GET /status.
 type NodeStatus struct {
 	Keys   int    `json:"keys"`

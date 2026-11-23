@@ -194,11 +194,24 @@ func TestAddNode(t *testing.T) {
 	nodeD := newMemNode(t)
 	nodes["D"] = nodeD
 
-	if err := rt.AddNode(context.Background(), "D", nodeD.srv.URL); err != nil {
+	report, err := rt.AddNode(context.Background(), "D", nodeD.srv.URL)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if rt.Paused() {
 		t.Error("router is still paused after AddNode")
+	}
+
+	gotD, _ := nodeD.snapshot()
+	if report.Records != len(gotD) || report.Records == 0 {
+		t.Errorf("moved %d records, node D holds %d", report.Records, len(gotD))
+	}
+	wantBytes := 0
+	for k, v := range gotD {
+		wantBytes += len(k) + len(v)
+	}
+	if report.Bytes != wantBytes {
+		t.Errorf("moved %d bytes, want %d", report.Bytes, wantBytes)
 	}
 
 	checkAllReadable(t, rt, want)
@@ -232,11 +245,16 @@ func TestRemoveNode(t *testing.T) {
 	})
 	want := putSampleData(t, rt, 100)
 
-	if err := rt.RemoveNode(context.Background(), "B"); err != nil {
+	beforeB, _ := nodes["B"].snapshot()
+	report, err := rt.RemoveNode(context.Background(), "B")
+	if err != nil {
 		t.Fatal(err)
 	}
 	if rt.Paused() {
 		t.Error("router is still paused after RemoveNode")
+	}
+	if report.Records != len(beforeB) || report.Records == 0 {
+		t.Errorf("moved %d records, B held %d", report.Records, len(beforeB))
 	}
 
 	checkAllReadable(t, rt, want)
@@ -256,19 +274,19 @@ func TestAddRemoveValidation(t *testing.T) {
 	a := newMemNode(t)
 	rt := newRouter(t, map[placement.NodeID]string{"A": a.srv.URL})
 
-	if err := rt.AddNode(context.Background(), "", a.srv.URL); err == nil {
+	if _, err := rt.AddNode(context.Background(), "", a.srv.URL); err == nil {
 		t.Error("AddNode accepted empty id")
 	}
-	if err := rt.AddNode(context.Background(), "B", ""); err == nil {
+	if _, err := rt.AddNode(context.Background(), "B", ""); err == nil {
 		t.Error("AddNode accepted empty url")
 	}
-	if err := rt.AddNode(context.Background(), "A", a.srv.URL); err == nil {
+	if _, err := rt.AddNode(context.Background(), "A", a.srv.URL); err == nil {
 		t.Error("AddNode accepted duplicate id")
 	}
-	if err := rt.RemoveNode(context.Background(), "Z"); !errors.Is(err, placement.ErrUnknownNode) {
+	if _, err := rt.RemoveNode(context.Background(), "Z"); !errors.Is(err, placement.ErrUnknownNode) {
 		t.Errorf("RemoveNode unknown: got %v, want ErrUnknownNode", err)
 	}
-	if err := rt.RemoveNode(context.Background(), "A"); !errors.Is(err, placement.ErrLastNode) {
+	if _, err := rt.RemoveNode(context.Background(), "A"); !errors.Is(err, placement.ErrLastNode) {
 		t.Errorf("RemoveNode last: got %v, want ErrLastNode", err)
 	}
 	if rt.Paused() {
