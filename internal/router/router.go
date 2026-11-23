@@ -88,6 +88,8 @@ func (rt *Router) Handler() http.Handler {
 	mux.HandleFunc("PUT /kv", rt.forward)
 	mux.HandleFunc("DELETE /kv", rt.forward)
 	mux.HandleFunc("GET /status", rt.status)
+	mux.HandleFunc("POST /nodes", rt.addNode)
+	mux.HandleFunc("DELETE /nodes/{id}", rt.removeNode)
 	return mux
 }
 
@@ -189,6 +191,41 @@ func (rt *Router) askStatus(ctx context.Context, nodeURL string) (protocol.NodeS
 		return st, fmt.Errorf("bad status reply: %w", err)
 	}
 	return st, nil
+}
+
+func (rt *Router) addNode(w http.ResponseWriter, r *http.Request) {
+	var body protocol.AddNodeRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("body is not valid JSON: %v", err))
+		return
+	}
+	report, err := rt.AddNode(r.Context(), placement.NodeID(body.ID), body.URL)
+	if err != nil {
+		writeError(w, maintenanceErrorStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
+func (rt *Router) removeNode(w http.ResponseWriter, r *http.Request) {
+	id := placement.NodeID(r.PathValue("id"))
+	report, err := rt.RemoveNode(r.Context(), id)
+	if err != nil {
+		writeError(w, maintenanceErrorStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
+func maintenanceErrorStatus(err error) int {
+	if errors.Is(err, ErrMaintenanceRunning) {
+		return http.StatusConflict
+	}
+	var bad badRequestError
+	if errors.As(err, &bad) {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

@@ -19,14 +19,19 @@ import (
 
 var ErrMaintenanceRunning = errors.New("maintenance is already running")
 
+type badRequestError struct{ err error }
+
+func (e badRequestError) Error() string { return e.err.Error() }
+func (e badRequestError) Unwrap() error { return e.err }
+
 // AddNode adds a running node to the cluster and moves the keys it now owns.
 func (rt *Router) AddNode(ctx context.Context, id placement.NodeID, nodeURL string) (protocol.MoveReport, error) {
 	nodeURL = strings.TrimSuffix(strings.TrimSpace(nodeURL), "/")
 	if id == "" {
-		return protocol.MoveReport{}, errors.New("node id is empty")
+		return protocol.MoveReport{}, badRequestError{errors.New("node id is empty")}
 	}
 	if nodeURL == "" {
-		return protocol.MoveReport{}, errors.New("node url is empty")
+		return protocol.MoveReport{}, badRequestError{errors.New("node url is empty")}
 	}
 	if !rt.maint.TryLock() {
 		return protocol.MoveReport{}, ErrMaintenanceRunning
@@ -38,7 +43,7 @@ func (rt *Router) AddNode(ctx context.Context, id placement.NodeID, nodeURL stri
 		return protocol.MoveReport{}, err
 	}
 	if err := next.Add(id); err != nil {
-		return protocol.MoveReport{}, err
+		return protocol.MoveReport{}, badRequestError{err}
 	}
 
 	nextURLs := maps.Clone(oldURLs)
@@ -49,7 +54,7 @@ func (rt *Router) AddNode(ctx context.Context, id placement.NodeID, nodeURL stri
 // RemoveNode moves all keys off id and removes it from the cluster.
 func (rt *Router) RemoveNode(ctx context.Context, id placement.NodeID) (protocol.MoveReport, error) {
 	if id == "" {
-		return protocol.MoveReport{}, errors.New("node id is empty")
+		return protocol.MoveReport{}, badRequestError{errors.New("node id is empty")}
 	}
 	if !rt.maint.TryLock() {
 		return protocol.MoveReport{}, ErrMaintenanceRunning
@@ -61,7 +66,7 @@ func (rt *Router) RemoveNode(ctx context.Context, id placement.NodeID) (protocol
 		return protocol.MoveReport{}, err
 	}
 	if err := next.Remove(id); err != nil {
-		return protocol.MoveReport{}, err
+		return protocol.MoveReport{}, badRequestError{err}
 	}
 
 	nextURLs := maps.Clone(oldURLs)

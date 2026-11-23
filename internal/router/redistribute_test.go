@@ -374,3 +374,60 @@ func TestRedistributeConcurrentRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestAddAndRemoveNodeEndpoints(t *testing.T) {
+	nodes := map[placement.NodeID]*memNode{
+		"A": newMemNode(t),
+		"B": newMemNode(t),
+		"C": newMemNode(t),
+	}
+	rt := newRouter(t, map[placement.NodeID]string{
+		"A": nodes["A"].srv.URL,
+		"B": nodes["B"].srv.URL,
+		"C": nodes["C"].srv.URL,
+	})
+	want := putSampleData(t, rt, 60)
+
+	nodeD := newMemNode(t)
+	nodes["D"] = nodeD
+
+	addRec := do(rt, "POST", "/nodes", fmt.Sprintf(`{"id":"D","url":%q}`, nodeD.srv.URL))
+	if addRec.Code != http.StatusOK {
+		t.Fatalf("POST /nodes: status %d (body %q)", addRec.Code, addRec.Body.String())
+	}
+	var addReport protocol.MoveReport
+	if err := json.Unmarshal(addRec.Body.Bytes(), &addReport); err != nil {
+		t.Fatalf("bad MoveReport %q: %v", addRec.Body.String(), err)
+	}
+	gotD, _ := nodeD.snapshot()
+	if addReport.Records != len(gotD) || addReport.Records == 0 {
+		t.Errorf("add moved %d records, D holds %d", addReport.Records, len(gotD))
+	}
+	checkAllReadable(t, rt, want)
+
+	beforeB, _ := nodes["B"].snapshot()
+	remRec := do(rt, "DELETE", "/nodes/B", "")
+	if remRec.Code != http.StatusOK {
+		t.Fatalf("DELETE /nodes/B: status %d (body %q)", remRec.Code, remRec.Body.String())
+	}
+	var remReport protocol.MoveReport
+	if err := json.Unmarshal(remRec.Body.Bytes(), &remReport); err != nil {
+		t.Fatalf("bad MoveReport %q: %v", remRec.Body.String(), err)
+	}
+	if remReport.Records != len(beforeB) || remReport.Records == 0 {
+		t.Errorf("remove moved %d records, B held %d", remReport.Records, len(beforeB))
+	}
+	checkAllReadable(t, rt, want)
+	checkExactOwnership(t, rt, nodes, want)
+}
+
+func TestNodeEndpointErrors(t *testing.T) {
+	a := newMemNode(t)
+	rt := newRouter(t, map[placement.NodeID]string{"A": a.srv.URL})
+
+	wantError(t, do(rt, "POST", "/nodes", "not json"), http.StatusBadRequest)
+	wantError(t, do(rt, "POST", "/nodes", `{"id":"","url":"http://localhost:8002"}`), http.StatusBadRequest)
+	wantError(t, do(rt, "POST", "/nodes", fmt.Sprintf(`{"id":"A","url":%q}`, a.srv.URL)), http.StatusBadRequest)
+	wantError(t, do(rt, "DELETE", "/nodes/Z", ""), http.StatusBadRequest)
+	wantError(t, do(rt, "DELETE", "/nodes/A", ""), http.StatusBadRequest)
+}

@@ -24,6 +24,12 @@ type Keys struct {
 	Keys []string `json:"keys"`
 }
 
+// AddNodeRequest is the JSON body of POST /nodes on the router.
+type AddNodeRequest struct {
+	ID  string `json:"id"`
+	URL string `json:"url"`
+}
+
 // MoveReport records how much data a maintenance run moved and how long each
 // stage took.
 type MoveReport struct {
