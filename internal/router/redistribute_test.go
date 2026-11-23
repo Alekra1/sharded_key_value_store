@@ -293,3 +293,84 @@ func TestAddRemoveValidation(t *testing.T) {
 		t.Error("validation errors should not pause the router")
 	}
 }
+
+func TestRedistributeNodeDownLeavesOldPlacement(t *testing.T) {
+	a := newMemNode(t)
+	b := newMemNode(t)
+	rt := newRouter(t, map[placement.NodeID]string{"A": a.srv.URL, "B": b.srv.URL})
+	want := putSampleData(t, rt, 40)
+
+	down := newMemNode(t)
+	downURL := down.srv.URL
+	down.srv.Close()
+
+	if _, err := rt.AddNode(context.Background(), "C", downURL); err == nil {
+		t.Fatal("AddNode succeeded with unreachable new node")
+	}
+	if !rt.Paused() {
+		t.Error("router should stay paused after a failed run")
+	}
+	if !slices.Equal(rt.placement.Members(), []placement.NodeID{"A", "B"}) {
+		t.Errorf("members changed to %v after failure", rt.placement.Members())
+	}
+
+	gotA, _ := a.snapshot()
+	gotB, _ := b.snapshot()
+	if len(gotA)+len(gotB) != len(want) {
+		t.Errorf("sources lost data: A=%d B=%d want total %d", len(gotA), len(gotB), len(want))
+	}
+}
+
+func TestRedistributeVerifyMismatchKeepsSources(t *testing.T) {
+	a := newMemNode(t)
+	b := newMemNode(t)
+	rt := newRouter(t, map[placement.NodeID]string{"A": a.srv.URL, "B": b.srv.URL})
+	want := putSampleData(t, rt, 40)
+
+	badD := newMemNode(t)
+	badD.dropOnPut = true
+
+	if _, err := rt.AddNode(context.Background(), "D", badD.srv.URL); err == nil {
+		t.Fatal("AddNode succeeded despite dropped records")
+	}
+	if !rt.Paused() {
+		t.Error("router should stay paused after verify failure")
+	}
+	if !slices.Equal(rt.placement.Members(), []placement.NodeID{"A", "B"}) {
+		t.Errorf("members changed to %v after verify failure", rt.placement.Members())
+	}
+
+	gotA, _ := a.snapshot()
+	gotB, _ := b.snapshot()
+	if len(gotA)+len(gotB) != len(want) {
+		t.Errorf("sources were modified after verify failure: A=%d B=%d want %d", len(gotA), len(gotB), len(want))
+	}
+}
+
+func TestRedistributeConcurrentRejected(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	a := newMemNode(t)
+	a.onFreeze = func() {
+		close(started)
+		<-release
+	}
+	b := newMemNode(t)
+	c := newMemNode(t)
+	rt := newRouter(t, map[placement.NodeID]string{"A": a.srv.URL, "B": b.srv.URL})
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := rt.AddNode(context.Background(), "C", c.srv.URL)
+		done <- err
+	}()
+	<-started
+
+	if _, err := rt.RemoveNode(context.Background(), "B"); !errors.Is(err, ErrMaintenanceRunning) {
+		t.Errorf("concurrent RemoveNode: got %v, want ErrMaintenanceRunning", err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
