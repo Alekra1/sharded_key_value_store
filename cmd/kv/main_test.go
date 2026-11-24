@@ -173,6 +173,8 @@ func TestRouterErrors(t *testing.T) {
 		{"value not JSON", 200, "meow", []string{"get", "x"}, `bad reply from router: "meow"`},
 		{"value missing", 200, "{}", []string{"get", "x"}, `bad reply from router: "{}"`},
 		{"status not JSON", 200, "meow", []string{"status"}, `bad reply from router: "meow"`},
+		{"maintenance busy", 409, `{"error":"maintenance is already running"}`, []string{"node", "remove", "B"}, "maintenance is already running"},
+		{"move report not JSON", 200, "meow", []string{"node", "add", "D", "http://d"}, `bad reply from router: "meow"`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -208,6 +210,10 @@ func TestBadCommands(t *testing.T) {
 		{"delete"},
 		{"delete", "a", "b"},
 		{"status", "x"},
+		{"node"},
+		{"node", "add", "D"},
+		{"node", "remove"},
+		{"node", "frob", "D"},
 	} {
 		if _, err := kv(srv.URL, args...); !errors.Is(err, errUsage) {
 			t.Errorf("kv %q: error %v, want errUsage", args, err)
@@ -231,4 +237,28 @@ C  http://c  unavailable: connection refused
 total: 10 keys on 3 of 4 nodes
 `
 	wantOutput(t, router, want, "status")
+}
+
+func TestNodeAddRemove(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		got = append(got, r.Method+" "+r.URL.Path+" body="+string(body))
+		reply(w, http.StatusOK, protocol.MoveReport{
+			Records: 25, Bytes: 350, FreezeMs: 2, CopyMs: 8, VerifyMs: 3, CleanupMs: 4, TotalMs: 17,
+		})
+	}))
+	defer srv.Close()
+
+	want := "moved 25 records (350 bytes) in 17 ms (freeze 2 ms, copy 8 ms, verify 3 ms, cleanup 4 ms)\n"
+	wantOutput(t, srv.URL, want, "node", "add", "D", "http://localhost:8004")
+	wantOutput(t, srv.URL, want, "node", "remove", "B")
+
+	wantReqs := []string{
+		`POST /nodes body={"id":"D","url":"http://localhost:8004"}`,
+		`DELETE /nodes/B body=`,
+	}
+	if !slices.Equal(got, wantReqs) {
+		t.Fatalf("router got\n%q\nwant\n%q", got, wantReqs)
+	}
 }

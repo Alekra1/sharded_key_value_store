@@ -22,6 +22,8 @@ const usage = `usage:
   kv [-router URL] get KEY
   kv [-router URL] delete KEY
   kv [-router URL] status
+  kv [-router URL] node add ID URL
+  kv [-router URL] node remove ID
 `
 
 var errUsage = errors.New("bad command")
@@ -68,6 +70,10 @@ func run(routerURL string, args []string, out io.Writer) error {
 		return c.delete(rest[0])
 	case cmd == "status" && len(rest) == 0:
 		return c.status(out)
+	case cmd == "node" && len(rest) == 3 && rest[0] == "add":
+		return c.addNode(out, rest[1], rest[2])
+	case cmd == "node" && len(rest) == 2 && rest[0] == "remove":
+		return c.removeNode(out, rest[1])
 	}
 	return errUsage
 }
@@ -140,6 +146,36 @@ func (c client) status(out io.Writer) error {
 		reached++
 	}
 	fmt.Fprintf(out, "total: %d keys on %d of %d nodes\n", keys, reached, len(st.Nodes))
+	return nil
+}
+
+func (c client) addNode(out io.Writer, id, nodeURL string) error {
+	body, err := json.Marshal(protocol.AddNodeRequest{ID: id, URL: nodeURL})
+	if err != nil {
+		return err
+	}
+	data, err := c.do(http.MethodPost, "/nodes", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	return printMoveReport(out, data)
+}
+
+func (c client) removeNode(out io.Writer, id string) error {
+	data, err := c.do(http.MethodDelete, "/nodes/"+url.PathEscape(id), nil)
+	if err != nil {
+		return err
+	}
+	return printMoveReport(out, data)
+}
+
+func printMoveReport(out io.Writer, data []byte) error {
+	var r protocol.MoveReport
+	if err := json.Unmarshal(data, &r); err != nil {
+		return fmt.Errorf("bad reply from router: %q", data)
+	}
+	fmt.Fprintf(out, "moved %d records (%d bytes) in %d ms (freeze %d ms, copy %d ms, verify %d ms, cleanup %d ms)\n",
+		r.Records, r.Bytes, r.TotalMs, r.FreezeMs, r.CopyMs, r.VerifyMs, r.CleanupMs)
 	return nil
 }
 
