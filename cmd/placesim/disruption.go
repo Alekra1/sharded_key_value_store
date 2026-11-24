@@ -1,6 +1,10 @@
 package main
 
-import "github.com/Alekra1/sharded_key_value_store/internal/placement"
+import (
+	"time"
+
+	"github.com/Alekra1/sharded_key_value_store/internal/placement"
+)
 
 func ownersOf(p placement.Placement, keys []string) []placement.NodeID {
 	owners := make([]placement.NodeID, len(keys))
@@ -20,18 +24,22 @@ func fractionChanged(before, after []placement.NodeID) float64 {
 	return float64(changed) / float64(len(before))
 }
 
-func measureAdd(p placement.Placement, keys []string, newNode placement.NodeID) (float64, error) {
+func measureAdd(p placement.Placement, keys []string, newNode placement.NodeID) (float64, float64, error) {
 	before := ownersOf(p, keys)
+	start := time.Now()
 	if err := p.Add(newNode); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	return fractionChanged(before, ownersOf(p, keys)), nil
+	rebuildMs := float64(time.Since(start).Nanoseconds()) / 1e6
+	return fractionChanged(before, ownersOf(p, keys)), rebuildMs, nil
 }
 
-func measureRemove(p placement.Placement, keys []string, node placement.NodeID) (float64, error) {
+func measureRemove(p placement.Placement, keys []string, node placement.NodeID) (float64, float64, error) {
 	before := ownersOf(p, keys)
+	start := time.Now()
 	if err := p.Remove(node); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	return fractionChanged(before, ownersOf(p, keys)), nil
+	rebuildMs := float64(time.Since(start).Nanoseconds()) / 1e6
+	return fractionChanged(before, ownersOf(p, keys)), rebuildMs, nil
 }

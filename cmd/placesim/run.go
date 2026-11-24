@@ -14,6 +14,7 @@ var header = []string{
 	"max_over_mean", "cv",
 	"add_moved", "add_ideal",
 	"remove_last_moved", "remove_middle_moved", "remove_ideal",
+	"saved_bytes", "mem_bytes", "add_rebuild_ms", "remove_rebuild_ms",
 }
 
 func run(w io.Writer, seeds []uint64, keyCount int, nodeCounts []int) error {
@@ -50,17 +51,23 @@ func run(w io.Writer, seeds []uint64, keyCount int, nodeCounts []int) error {
 func measureRow(a algorithm, members []placement.NodeID, newNode placement.NodeID, keys []string) ([]string, error) {
 	n := len(members)
 
-	p, err := a.build(members)
+	p, memBytes, err := buildAndMeasureMem(func() (placement.Placement, error) {
+		return a.build(members)
+	})
 	if err != nil {
 		return nil, err
 	}
 	balance := measureBalance(p, keys)
+	savedBytes, err := measureSavedBytes(p)
+	if err != nil {
+		return nil, err
+	}
 
 	p, err = a.build(members)
 	if err != nil {
 		return nil, err
 	}
-	added, err := measureAdd(p, keys, newNode)
+	added, addRebuildMs, err := measureAdd(p, keys, newNode)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +78,7 @@ func measureRow(a algorithm, members []placement.NodeID, newNode placement.NodeI
 	}
 	current := p.Members()
 	last := current[len(current)-1]
-	removedLast, err := measureRemove(p, keys, last)
+	removedLast, removeRebuildMs, err := measureRemove(p, keys, last)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +87,7 @@ func measureRow(a algorithm, members []placement.NodeID, newNode placement.NodeI
 	if err != nil {
 		return nil, err
 	}
-	removedMiddle, err := measureRemove(p, keys, members[n/2])
+	removedMiddle, _, err := measureRemove(p, keys, members[n/2])
 	if err != nil {
 		return nil, err
 	}
@@ -93,6 +100,10 @@ func measureRow(a algorithm, members []placement.NodeID, newNode placement.NodeI
 		formatFloat(removedLast),
 		formatFloat(removedMiddle),
 		formatFloat(1 / float64(n)),
+		strconv.Itoa(savedBytes),
+		strconv.FormatUint(memBytes, 10),
+		formatFloat(addRebuildMs),
+		formatFloat(removeRebuildMs),
 	}, nil
 }
 
