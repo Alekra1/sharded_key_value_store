@@ -214,6 +214,7 @@ func TestBadCommands(t *testing.T) {
 		{"node", "add", "D"},
 		{"node", "remove"},
 		{"node", "frob", "D"},
+		{"compact", "x"},
 	} {
 		if _, err := kv(srv.URL, args...); !errors.Is(err, errUsage) {
 			t.Errorf("kv %q: error %v, want errUsage", args, err)
@@ -260,5 +261,33 @@ func TestNodeAddRemove(t *testing.T) {
 	}
 	if !slices.Equal(got, wantReqs) {
 		t.Fatalf("router got\n%q\nwant\n%q", got, wantReqs)
+	}
+}
+
+func TestStatusLogWarning(t *testing.T) {
+	router := replyWith(t, http.StatusOK, `{"placement":{"algorithm":"modulo","nodes":["A","B"]},"nodes":[
+		{"name":"A","url":"http://a","keys":3,"log_bytes":512},
+		{"name":"B","url":"http://b","keys":5,"log_bytes":2097152}]}`)
+
+	want := `placement: {"algorithm":"modulo","nodes":["A","B"]}
+mode: normal
+A  http://a  3 keys, log 512 B
+B  http://b  5 keys, log 2097152 B (compact recommended)
+total: 8 keys on 2 of 2 nodes
+`
+	wantOutput(t, router, want, "status")
+}
+
+func TestCompact(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Method + " " + r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	wantOutput(t, srv.URL, "", "compact")
+	if got != "POST /compact" {
+		t.Fatalf("router got %q, want POST /compact", got)
 	}
 }

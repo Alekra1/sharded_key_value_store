@@ -90,6 +90,7 @@ func (rt *Router) Handler() http.Handler {
 	mux.HandleFunc("GET /status", rt.status)
 	mux.HandleFunc("POST /nodes", rt.addNode)
 	mux.HandleFunc("DELETE /nodes/{id}", rt.removeNode)
+	mux.HandleFunc("POST /compact", rt.compact)
 	return mux
 }
 
@@ -168,6 +169,7 @@ func (rt *Router) nodeReport(ctx context.Context, id placement.NodeID, nodeURL s
 		return report
 	}
 	report.Keys = st.Keys
+	report.LogBytes = st.LogBytes
 	report.Frozen = st.Frozen
 	report.Broken = st.Broken
 	return report
@@ -215,6 +217,14 @@ func (rt *Router) removeNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, report)
+}
+
+func (rt *Router) compact(w http.ResponseWriter, r *http.Request) {
+	if err := rt.Compact(r.Context()); err != nil {
+		writeError(w, maintenanceErrorStatus(err), err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func maintenanceErrorStatus(err error) int {

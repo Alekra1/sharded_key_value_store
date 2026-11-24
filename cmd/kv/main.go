@@ -24,7 +24,10 @@ const usage = `usage:
   kv [-router URL] status
   kv [-router URL] node add ID URL
   kv [-router URL] node remove ID
+  kv [-router URL] compact
 `
+
+const compactWarnBytes int64 = 1 << 20 // 1 MiB
 
 var errUsage = errors.New("bad command")
 
@@ -74,6 +77,8 @@ func run(routerURL string, args []string, out io.Writer) error {
 		return c.addNode(out, rest[1], rest[2])
 	case cmd == "node" && len(rest) == 2 && rest[0] == "remove":
 		return c.removeNode(out, rest[1])
+	case cmd == "compact" && len(rest) == 0:
+		return c.compact()
 	}
 	return errUsage
 }
@@ -135,6 +140,12 @@ func (c client) status(out io.Writer) error {
 			continue
 		}
 		line := fmt.Sprintf("%s  %s  %d keys", n.Name, n.URL, n.Keys)
+		if n.LogBytes > 0 {
+			line += fmt.Sprintf(", log %d B", n.LogBytes)
+			if n.LogBytes >= compactWarnBytes {
+				line += " (compact recommended)"
+			}
+		}
 		if n.Frozen {
 			line += ", frozen"
 		}
@@ -167,6 +178,11 @@ func (c client) removeNode(out io.Writer, id string) error {
 		return err
 	}
 	return printMoveReport(out, data)
+}
+
+func (c client) compact() error {
+	_, err := c.do(http.MethodPost, "/compact", nil)
+	return err
 }
 
 func printMoveReport(out io.Writer, data []byte) error {

@@ -22,6 +22,7 @@ type memNode struct {
 	mu        sync.Mutex
 	data      map[string]string
 	frozen    bool
+	compacted int
 	dropOnPut bool
 	onFreeze  func()
 	srv       *httptest.Server
@@ -35,6 +36,7 @@ func newMemNode(t *testing.T) *memNode {
 	mux.HandleFunc("PUT /kv", n.put)
 	mux.HandleFunc("POST /freeze", n.freeze)
 	mux.HandleFunc("POST /unfreeze", n.unfreeze)
+	mux.HandleFunc("POST /compact", n.compact)
 	mux.HandleFunc("GET /records", n.records)
 	mux.HandleFunc("PUT /records", n.putRecords)
 	mux.HandleFunc("DELETE /records", n.deleteRecords)
@@ -84,6 +86,17 @@ func (n *memNode) unfreeze(w http.ResponseWriter, r *http.Request) {
 	n.mu.Lock()
 	n.frozen = false
 	n.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (n *memNode) compact(w http.ResponseWriter, r *http.Request) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if !n.frozen {
+		writeError(w, http.StatusConflict, "not frozen")
+		return
+	}
+	n.compacted++
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -430,4 +443,33 @@ func TestNodeEndpointErrors(t *testing.T) {
 	wantError(t, do(rt, "POST", "/nodes", fmt.Sprintf(`{"id":"A","url":%q}`, a.srv.URL)), http.StatusBadRequest)
 	wantError(t, do(rt, "DELETE", "/nodes/Z", ""), http.StatusBadRequest)
 	wantError(t, do(rt, "DELETE", "/nodes/A", ""), http.StatusBadRequest)
+}
+
+func TestCompactEndpoint(t *testing.T) {
+	nodes := map[placement.NodeID]*memNode{
+		"A": newMemNode(t),
+		"B": newMemNode(t),
+		"C": newMemNode(t),
+	}
+	rt := newRouter(t, map[placement.NodeID]string{
+		"A": nodes["A"].srv.URL,
+		"B": nodes["B"].srv.URL,
+		"C": nodes["C"].srv.URL,
+	})
+
+	rec := do(rt, "POST", "/compact", "")
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("POST /compact: status %d (body %q)", rec.Code, rec.Body.String())
+	}
+	if rt.Paused() {
+		t.Error("router is still paused after compact")
+	}
+	for id, n := range nodes {
+		n.mu.Lock()
+		compacted, frozen := n.compacted, n.frozen
+		n.mu.Unlock()
+		if compacted != 1 || frozen {
+			t.Errorf("node %s: compacted=%d frozen=%v, want 1, false", id, compacted, frozen)
+		}
+	}
 }

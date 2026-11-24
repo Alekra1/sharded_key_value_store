@@ -212,7 +212,7 @@ func statusNode(t *testing.T, status int, body string) string {
 }
 
 func TestStatus(t *testing.T) {
-	a := statusNode(t, http.StatusOK, `{"keys":3}`)
+	a := statusNode(t, http.StatusOK, `{"keys":3,"log_bytes":512}`)
 	b := statusNode(t, http.StatusOK, `{"keys":5,"frozen":true,"broken":"disk full"}`)
 	c := statusNode(t, http.StatusInternalServerError, "")
 	down := echoNode(t, "D")
@@ -235,7 +235,7 @@ func TestStatus(t *testing.T) {
 	if len(got.Nodes) != 4 {
 		t.Fatalf("got %d nodes, want 4: %+v", len(got.Nodes), got.Nodes)
 	}
-	if want := (protocol.NodeReport{Name: "A", URL: a, Keys: 3}); got.Nodes[0] != want {
+	if want := (protocol.NodeReport{Name: "A", URL: a, Keys: 3, LogBytes: 512}); got.Nodes[0] != want {
 		t.Errorf("A: %+v, want %+v", got.Nodes[0], want)
 	}
 	if want := (protocol.NodeReport{Name: "B", URL: b, Keys: 5, Frozen: true, Broken: "disk full"}); got.Nodes[1] != want {

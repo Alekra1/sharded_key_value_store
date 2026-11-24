@@ -74,6 +74,43 @@ func (rt *Router) RemoveNode(ctx context.Context, id placement.NodeID) (protocol
 	return rt.redistribute(ctx, oldMembers, next, nextURLs, oldURLs)
 }
 
+// Compact pauses the cluster, freezes every node, compacts their logs, and
+// resumes service.
+func (rt *Router) Compact(ctx context.Context) error {
+	if !rt.maint.TryLock() {
+		return ErrMaintenanceRunning
+	}
+	defer rt.maint.Unlock()
+
+	rt.gate.RLock()
+	urls := maps.Clone(rt.nodes)
+	rt.gate.RUnlock()
+	ids := slices.Sorted(maps.Keys(urls))
+
+	if err := rt.Pause(); err != nil {
+		return fmt.Errorf("pause router: %w", err)
+	}
+	for _, id := range ids {
+		if err := rt.postNode(ctx, urls[id]+"/freeze"); err != nil {
+			return fmt.Errorf("freeze node %s: %w", id, err)
+		}
+	}
+	for _, id := range ids {
+		if err := rt.postNode(ctx, urls[id]+"/compact"); err != nil {
+			return fmt.Errorf("compact node %s: %w", id, err)
+		}
+	}
+	for _, id := range ids {
+		if err := rt.postNode(ctx, urls[id]+"/unfreeze"); err != nil {
+			return fmt.Errorf("unfreeze node %s: %w", id, err)
+		}
+	}
+	if err := rt.Unpause(); err != nil {
+		return fmt.Errorf("unpause router: %w", err)
+	}
+	return nil
+}
+
 func (rt *Router) clonePlacement() ([]placement.NodeID, placement.Placement, map[placement.NodeID]string, error) {
 	rt.gate.RLock()
 	saved, err := rt.placement.Save()
