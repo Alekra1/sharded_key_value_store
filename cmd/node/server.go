@@ -29,6 +29,7 @@ func (s *server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /status", s.status)
 	mux.HandleFunc("POST /freeze", s.freeze)
 	mux.HandleFunc("POST /unfreeze", s.unfreeze)
+	mux.HandleFunc("POST /compact", s.compact)
 	mux.HandleFunc("GET /records", s.records)
 	mux.HandleFunc("PUT /records", s.putRecords)
 	mux.HandleFunc("DELETE /records", s.deleteRecords)
@@ -78,7 +79,7 @@ func (s *server) delete(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) status(w http.ResponseWriter, r *http.Request) {
 	keys, frozen, broken := s.store.Status()
-	st := protocol.NodeStatus{Keys: keys, Frozen: frozen}
+	st := protocol.NodeStatus{Keys: keys, LogBytes: s.store.LogBytes(), Frozen: frozen}
 	if broken != nil {
 		st.Broken = broken.Error()
 	}
@@ -96,6 +97,18 @@ func (s *server) freeze(w http.ResponseWriter, r *http.Request) {
 func (s *server) unfreeze(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.Unfreeze(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) compact(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.Compact(); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, store.ErrNotFrozen) {
+			status = http.StatusConflict
+		}
+		writeError(w, status, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

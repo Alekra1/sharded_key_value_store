@@ -144,14 +144,16 @@ func readStatus(t *testing.T, rec *httptest.ResponseRecorder) protocol.NodeStatu
 
 func TestStatus(t *testing.T) {
 	s, st := newServer(t)
-	if got := readStatus(t, do(s, "GET", "/status", "")); got != (protocol.NodeStatus{}) {
-		t.Errorf("empty node: %+v, want no keys and not broken", got)
+	empty := readStatus(t, do(s, "GET", "/status", ""))
+	if empty.Keys != 0 || empty.Frozen || empty.Broken != "" || empty.LogBytes <= 0 {
+		t.Errorf("empty node: %+v, want 0 keys, header bytes, not frozen/broken", empty)
 	}
 
 	wantStatus(t, do(s, "PUT", "/kv?key=cat", `{"value":"meow"}`), http.StatusNoContent)
 	wantStatus(t, do(s, "PUT", "/kv?key=dog", `{"value":"woof"}`), http.StatusNoContent)
-	if got := readStatus(t, do(s, "GET", "/status", "")); got != (protocol.NodeStatus{Keys: 2}) {
-		t.Errorf("after two puts: %+v, want 2 keys and not broken", got)
+	after := readStatus(t, do(s, "GET", "/status", ""))
+	if after.Keys != 2 || after.Frozen || after.Broken != "" || after.LogBytes <= empty.LogBytes {
+		t.Errorf("after two puts: %+v, want 2 keys and larger log than %d", after, empty.LogBytes)
 	}
 
 	st.Close()
@@ -170,13 +172,13 @@ func TestFreeze(t *testing.T) {
 	wantError(t, do(s, "PUT", "/kv?key=dog", `{"value":"woof"}`), http.StatusServiceUnavailable)
 	wantError(t, do(s, "DELETE", "/kv?key=cat", ""), http.StatusServiceUnavailable)
 	wantValue(t, do(s, "GET", "/kv?key=cat", ""), "meow")
-	if got := readStatus(t, do(s, "GET", "/status", "")); got != (protocol.NodeStatus{Keys: 1, Frozen: true}) {
+	if got := readStatus(t, do(s, "GET", "/status", "")); got.Keys != 1 || !got.Frozen || got.Broken != "" {
 		t.Errorf("frozen node: %+v, want 1 key and frozen", got)
 	}
 
 	wantStatus(t, do(s, "POST", "/unfreeze", ""), http.StatusNoContent)
 	wantStatus(t, do(s, "PUT", "/kv?key=dog", `{"value":"woof"}`), http.StatusNoContent)
-	if got := readStatus(t, do(s, "GET", "/status", "")); got != (protocol.NodeStatus{Keys: 2}) {
+	if got := readStatus(t, do(s, "GET", "/status", "")); got.Keys != 2 || got.Frozen || got.Broken != "" {
 		t.Errorf("after unfreeze: %+v, want 2 keys and not frozen", got)
 	}
 
@@ -225,4 +227,24 @@ func TestRecordsBadRequests(t *testing.T) {
 		wantError(t, do(s, c.method, "/records", c.body), http.StatusBadRequest)
 	}
 	wantStatus(t, do(s, "POST", "/records", "{}"), http.StatusMethodNotAllowed)
+}
+
+func TestCompact(t *testing.T) {
+	s, _ := newServer(t)
+	for range 10 {
+		wantStatus(t, do(s, "PUT", "/kv?key=cat", `{"value":"meow"}`), http.StatusNoContent)
+	}
+
+	wantError(t, do(s, "POST", "/compact", ""), http.StatusConflict)
+
+	before := readStatus(t, do(s, "GET", "/status", "")).LogBytes
+	wantStatus(t, do(s, "POST", "/freeze", ""), http.StatusNoContent)
+	wantStatus(t, do(s, "POST", "/compact", ""), http.StatusNoContent)
+
+	after := readStatus(t, do(s, "GET", "/status", "")).LogBytes
+	if after >= before {
+		t.Fatalf("log did not shrink: before %d, after %d", before, after)
+	}
+	wantValue(t, do(s, "GET", "/kv?key=cat", ""), "meow")
+	wantStatus(t, do(s, "GET", "/compact", ""), http.StatusMethodNotAllowed)
 }
