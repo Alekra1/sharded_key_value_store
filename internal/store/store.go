@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 )
 
@@ -21,6 +23,7 @@ var (
 	ErrKeyTooLong   = fmt.Errorf("key is longer than %d bytes", maxKeyLen)
 	ErrValueTooLong = fmt.Errorf("value is longer than %d bytes", maxValueLen)
 	ErrFrozen       = errors.New("node is frozen for maintenance")
+	ErrNotFrozen    = errors.New("node must be frozen before compaction")
 )
 
 type Store struct {
@@ -188,6 +191,109 @@ func (s *Store) Status() (keys int, frozen bool, broken error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.data), s.frozen, s.broken
+}
+
+func (s *Store) LogBytes() int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	info, err := os.Stat(filepath.Join(s.dir, logName))
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
+// Compact rewrites the log with one put per existent key, dropping overwritten
+// values and delete markers. The store must be frozen first.
+func (s *Store) Compact() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.broken != nil {
+		return s.broken
+	}
+	if !s.frozen {
+		return ErrNotFrozen
+	}
+
+	buf := encodeHeader()
+	for _, key := range slices.Sorted(maps.Keys(s.data)) {
+		buf = append(buf, encodeEntry(entry{op: opPut, key: key, value: s.data[key]})...)
+	}
+
+	logPath := filepath.Join(s.dir, logName)
+	newPath := logPath + ".new"
+	if err := writeAndSync(newPath, buf); err != nil {
+		os.Remove(newPath)
+		return err
+	}
+
+	// Replay the new file independently before replacing the live log.
+	replayed, err := replayFile(newPath)
+	if err != nil {
+		os.Remove(newPath)
+		return fmt.Errorf("verify compacted log: %w", err)
+	}
+	if !maps.Equal(replayed, s.data) {
+		os.Remove(newPath)
+		return errors.New("verify compacted log: replayed data does not match memory")
+	}
+
+	if err := s.log.Close(); err != nil {
+		os.Remove(newPath)
+		s.broken = fmt.Errorf("store stopped after compaction close failed: %w", err)
+		return s.broken
+	}
+	if err := os.Rename(newPath, logPath); err != nil {
+		s.broken = fmt.Errorf("store stopped after compaction rename failed: %w", err)
+		return s.broken
+	}
+	f, err := os.OpenFile(logPath, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		s.broken = fmt.Errorf("store stopped after compaction reopen failed: %w", err)
+		return s.broken
+	}
+	s.log = f
+	return nil
+}
+
+func writeAndSync(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	return err
+}
+
+func replayFile(path string) (map[string]string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	r := bytes.NewReader(raw)
+	if err := checkHeader(r); err != nil {
+		return nil, err
+	}
+	data := make(map[string]string)
+	for {
+		e, err := readEntry(r)
+		if errors.Is(err, io.EOF) {
+			return data, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if e.op != opPut {
+			return nil, fmt.Errorf("unexpected op %d in compacted log", e.op)
+		}
+		data[e.key] = e.value
+	}
 }
 
 // Freeze makes Put and Delete fail with ErrFrozen until Unfreeze. It takes the

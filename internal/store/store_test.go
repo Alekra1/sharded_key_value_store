@@ -518,3 +518,72 @@ func TestBrokenStoreRefusesBulkWrites(t *testing.T) {
 		t.Errorf("Records() = %v, want %v", s.Records(), want)
 	}
 }
+
+func TestCompact(t *testing.T) {
+	s, dir := newStore(t)
+	for i := range 20 {
+		mustPut(t, s, "cat", fmt.Sprintf("meow-%d", i))
+	}
+	mustPut(t, s, "dog", "woof")
+	mustPut(t, s, "bird", "tweet")
+	if err := s.Delete("dog"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Compact(); !errors.Is(err, ErrNotFrozen) {
+		t.Fatalf("Compact before Freeze: got %v, want ErrNotFrozen", err)
+	}
+
+	before := s.LogBytes()
+	if err := s.Freeze(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Compact(); err != nil {
+		t.Fatal(err)
+	}
+	after := s.LogBytes()
+	if after >= before {
+		t.Fatalf("log did not shrink: before %d bytes, after %d bytes", before, after)
+	}
+	if _, err := os.Stat(filepath.Join(dir, logName+".new")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("log.new still exists after Compact: %v", err)
+	}
+
+	// Unfreeze and write a new key to confirm the reopened log accepts appends.
+	if err := s.Unfreeze(); err != nil {
+		t.Fatal(err)
+	}
+	mustPut(t, s, "fox", "ring")
+	s.Close()
+
+	reopened, cut := reopen(t, dir)
+	defer reopened.Close()
+	if cut != 0 {
+		t.Fatalf("reopen after Compact cut %d bytes, want 0", cut)
+	}
+	want := map[string]string{"cat": "meow-19", "bird": "tweet", "fox": "ring"}
+	if !maps.Equal(reopened.Records(), want) {
+		t.Fatalf("reopened records %v, want %v", reopened.Records(), want)
+	}
+}
+
+func TestCompactEmptyStore(t *testing.T) {
+	s, dir := newStore(t)
+	mustPut(t, s, "temp", "gone")
+	if err := s.Delete("temp"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Freeze(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Compact(); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	reopened, cut := reopen(t, dir)
+	defer reopened.Close()
+	if cut != 0 || len(reopened.Records()) != 0 {
+		t.Fatalf("reopened empty store: cut %d, %d keys; want 0, 0", cut, len(reopened.Records()))
+	}
+}
