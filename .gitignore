@@ -16,6 +16,11 @@ coverage.*
 /bin/
 /dist/
 /build/
+/node
+/router
+/kv
+/placesim
+/data/
 
 # Workspace
 go.work
